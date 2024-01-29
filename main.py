@@ -123,7 +123,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
 
             input_text = torch.tensor([seed_tokens]).long().to(device)
 
-            for _ in range(200):  # Generating 256 tokens
+            for _ in range(120):
                 predictions = model(input_text)[level_of_detail_index]
                 next_token_idx = predictions[:, -1, :].argmax(dim=-1)
                 input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
@@ -148,6 +148,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
 
             val_loss *= 1000000 * (1 / len(val_loader)) / batch_size
             print(f"\nValidation Loss for Epoch {epoch}  Detail Index {level_of_detail_index}: {val_loss:.4f}")
+            print('')
         
 
 def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail):
@@ -207,7 +208,7 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_o
             print(f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
                     end='')
 
-        # Print a newline at the end to move to the next line in the console
+    # Print a newline at the end to move to the next line in the console
     print('')
 
 
