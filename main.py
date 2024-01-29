@@ -98,6 +98,103 @@ class TransformerModel(nn.Module):
         return output_primary + output_secondary
 
 
+
+def evaluate(tokenizer, val_loader, model, criterion, epoch):
+    model.eval()  # Set the model to evaluation mode
+    with torch.no_grad():
+            # Generate text after each epoch
+        seed_text = "Once upon a time a blue"
+        seed_tokens = tokenizer.encode(seed_text).ids
+
+            # Find <bos> token ID
+        bos_token_id = tokenizer.token_to_id("<bos>")
+            # Prepend <bos> token ID to the seed_tokens
+        seed_tokens = [bos_token_id] + seed_tokens
+
+        input_text = torch.tensor([seed_tokens]).long().to(device)
+
+        for _ in range(200):  # Generating 256 tokens
+            predictions = model(input_text)
+            next_token_idx = predictions[:, -1, :].argmax(dim=-1)
+            input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
+
+            # Decode the generated tokens using the tokenizer
+        generated_text = tokenizer.decode(input_text[0].cpu().tolist())
+
+        print(f"Epoch {epoch}: {generated_text}")
+
+        val_loss = 0.0
+        for i, (text, target) in enumerate(val_loader):
+            text = text.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            predictions = model(text)
+            predictions = predictions.view(-1, predictions.size(2))
+            target = target.view(-1)
+            loss = criterion(predictions, target)
+            val_loss += loss.item()
+
+            if i > 20:
+                break
+
+        val_loss /= len(val_loader)
+        print(f"\nValidation Loss for Epoch {epoch}: {val_loss * 200:.4f}")
+        
+
+def train(train_loader, model, criterion, optimizer, scaler, epoch):
+    model.train()
+
+    start_time_total = time.time()
+
+    total_loss = 0.0
+    for i, (text, target) in enumerate(train_loader):
+        with autocast():
+            start_time = time.time()
+            tokens_processed = 0
+
+            text = text.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            assert text.shape[0] == target.shape[0], f"Batch size mismatch: text {text.shape}, target {target.shape}"
+
+                # Increment the token counter
+            tokens_processed += batch_size * seq_length
+
+            predictions = model(text)
+            assert predictions.shape[0] == text.shape[
+                    0], f"Predictions batch size mismatch: predictions {predictions.shape}, text {text.shape}"
+
+            predictions = predictions.view(-1, predictions.size(2))
+            target = target.view(-1)
+            assert predictions.size(0) == target.size(
+                    0), f"Predictions and target size mismatch after reshaping: predictions {predictions.size(0)}, target {target.size(0)}"
+
+                # Compute loss
+            loss = criterion(predictions, target)
+            total_loss += loss.item()
+
+                # Scale the loss and compute the gradients
+            scaler.scale(loss).backward()
+
+                # Update the weights using the scaled gradients
+            scaler.step(optimizer)
+            scaler.update()
+
+            optimizer.zero_grad()
+
+                # Calculate tokens per second for this batch
+            elapsed_time_total = time.time() - start_time_total
+            elapsed_time = time.time() - start_time
+            tokens_per_second = tokens_processed / elapsed_time
+            avg_loss = total_loss / (i + 1)
+            epoch_progress = (i + 1) / len(train_loader) * 100
+
+            print(
+                    f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
+                    end='')
+
+        # Print a newline at the end to move to the next line in the console
+    print('')
+
+
 def load_checkpoint(model, optimizer):
     if os.path.exists(checkpoint_path):
         # Load the state dictionary from the checkpoint file
@@ -243,102 +340,15 @@ def main():
 
     for epoch in range(num_epochs):
 
-        model.eval()  # Set the model to evaluation mode
-        with torch.no_grad():
-            # Generate text after each epoch
-            seed_text = "Once upon a time a blue"
-            seed_tokens = tokenizer.encode(seed_text).ids
+        evaluate(tokenizer, val_loader, model, criterion, epoch)
 
-            # Find <bos> token ID
-            bos_token_id = tokenizer.token_to_id("<bos>")
-            # Prepend <bos> token ID to the seed_tokens
-            seed_tokens = [bos_token_id] + seed_tokens
-
-            input_text = torch.tensor([seed_tokens]).long().to(device)
-
-            for _ in range(200):  # Generating 256 tokens
-                predictions = model(input_text)
-                next_token_idx = predictions[:, -1, :].argmax(dim=-1)
-                input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
-
-            # Decode the generated tokens using the tokenizer
-            generated_text = tokenizer.decode(input_text[0].cpu().tolist())
-
-            print(f"Epoch {epoch}: {generated_text}")
-
-            val_loss = 0.0
-            for i, (text, target) in enumerate(val_loader):
-                text = text.to(device, non_blocking=True)
-                target = target.to(device, non_blocking=True)
-                predictions = model(text)
-                predictions = predictions.view(-1, predictions.size(2))
-                target = target.view(-1)
-                loss = criterion(predictions, target)
-                val_loss += loss.item()
-
-                if i > 20:
-                    break
-
-            val_loss /= len(val_loader)
-            print(f"\nValidation Loss for Epoch {epoch}: {val_loss * 200:.4f}")
-
-        model.train()
-
-        start_time_total = time.time()
-
-        total_loss = 0.0
-        for i, (text, target) in enumerate(train_loader):
-            with autocast():
-                start_time = time.time()
-                tokens_processed = 0
-
-                text = text.to(device, non_blocking=True)
-                target = target.to(device, non_blocking=True)
-                assert text.shape[0] == target.shape[0], f"Batch size mismatch: text {text.shape}, target {target.shape}"
-
-                # Increment the token counter
-                tokens_processed += batch_size * seq_length
-
-                predictions = model(text)
-                assert predictions.shape[0] == text.shape[
-                    0], f"Predictions batch size mismatch: predictions {predictions.shape}, text {text.shape}"
-
-                predictions = predictions.view(-1, predictions.size(2))
-                target = target.view(-1)
-                assert predictions.size(0) == target.size(
-                    0), f"Predictions and target size mismatch after reshaping: predictions {predictions.size(0)}, target {target.size(0)}"
-
-                # Compute loss
-                loss = criterion(predictions, target)
-                total_loss += loss.item()
-
-                # Scale the loss and compute the gradients
-                scaler.scale(loss).backward()
-
-                # Update the weights using the scaled gradients
-                scaler.step(optimizer)
-                scaler.update()
-
-                optimizer.zero_grad()
-
-                # Calculate tokens per second for this batch
-                elapsed_time_total = time.time() - start_time_total
-                elapsed_time = time.time() - start_time
-                tokens_per_second = tokens_processed / elapsed_time
-                avg_loss = total_loss / (i + 1)
-                epoch_progress = (i + 1) / len(train_loader) * 100
-
-                print(
-                    f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
-                    end='')
-
-        # Print a newline at the end to move to the next line in the console
-        print('')
+        train(train_loader, model, criterion, optimizer, scaler, epoch)
         
         save_checkpoint(epoch, model, optimizer)
 
 
     print("Training completed.")
+
 
 if __name__ == '__main__':
     freeze_support() # Optional, only if you plan to create an executable
