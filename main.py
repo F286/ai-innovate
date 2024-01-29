@@ -24,7 +24,6 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
 batch_size = 512
-batch_size_validation = batch_size
 seq_length = 256  # The length to pad or truncate to
 d_model = 64  # d_model
 feed_forward_expand_dim = d_model * 4
@@ -33,6 +32,7 @@ num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
+num_levels_of_detail = 2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
@@ -95,52 +95,55 @@ class TransformerModel(nn.Module):
         output_primary = self.fc(x_primary)
         output_secondary = self.fc(x_secondary)
 
-        return output_primary + output_secondary
+        return [output_primary, output_secondary]
 
 
 
-def evaluate(tokenizer, val_loader, model, criterion, epoch):
+def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_levels_of_detail):
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():
+        
+        # For each level of detail
+        for level_of_detail_index in range(num_levels_of_detail):
             # Generate text after each epoch
-        seed_text = "Once upon a time a blue"
-        seed_tokens = tokenizer.encode(seed_text).ids
+            seed_text = "Once upon a time a blue"
+            seed_tokens = tokenizer.encode(seed_text).ids
 
             # Find <bos> token ID
-        bos_token_id = tokenizer.token_to_id("<bos>")
+            bos_token_id = tokenizer.token_to_id("<bos>")
             # Prepend <bos> token ID to the seed_tokens
-        seed_tokens = [bos_token_id] + seed_tokens
+            seed_tokens = [bos_token_id] + seed_tokens
 
-        input_text = torch.tensor([seed_tokens]).long().to(device)
+            input_text = torch.tensor([seed_tokens]).long().to(device)
 
-        for _ in range(200):  # Generating 256 tokens
-            predictions = model(input_text)
-            next_token_idx = predictions[:, -1, :].argmax(dim=-1)
-            input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
+            for _ in range(200):  # Generating 256 tokens
+                predictions = model(input_text)[level_of_detail_index]
+                next_token_idx = predictions[:, -1, :].argmax(dim=-1)
+                input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
 
             # Decode the generated tokens using the tokenizer
-        generated_text = tokenizer.decode(input_text[0].cpu().tolist())
+            generated_text = tokenizer.decode(input_text[0].cpu().tolist())
 
-        print(f"Epoch {epoch}: {generated_text}")
+            print(f"Epoch {epoch}  LOD {level_of_detail_index}: {generated_text}")
 
-        val_loss = 0.0
-        for i, (text, target) in enumerate(val_loader):
-            text = text.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
-            predictions = model(text)
-            predictions = predictions.view(-1, predictions.size(2))
-            target = target.view(-1)
-            loss = criterion(predictions, target)
-            val_loss += loss.item()
+            val_loss = 0.0
+            for i, (text, target) in enumerate(val_loader):
+                text = text.to(device, non_blocking=True)
+                target = target.to(device, non_blocking=True)
+                predictions = model(text)[level_of_detail_index]
+                predictions = predictions.view(-1, predictions.size(2))
+                target = target.view(-1)
+                loss = criterion(predictions, target)
+                val_loss += loss.item()
 
-            if i > 20:
-                break
+                if i > 20:
+                    break
 
-        val_loss /= len(val_loader)
-        print(f"\nValidation Loss for Epoch {epoch}: {val_loss * 200:.4f}")
+            val_loss *= 1000000 * (1 / len(val_loader)) / batch_size
+            print(f"\nValidation Loss for Epoch {epoch}  LOD {level_of_detail_index}: {val_loss:.4f}")
         
 
-def train(train_loader, model, criterion, optimizer, scaler, epoch):
+def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail):
     model.train()
 
     start_time_total = time.time()
@@ -155,40 +158,46 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch):
             target = target.to(device, non_blocking=True)
             assert text.shape[0] == target.shape[0], f"Batch size mismatch: text {text.shape}, target {target.shape}"
 
-                # Increment the token counter
+            # Increment the token counter
             tokens_processed += batch_size * seq_length
 
+            # Run the model
             predictions = model(text)
-            assert predictions.shape[0] == text.shape[
-                    0], f"Predictions batch size mismatch: predictions {predictions.shape}, text {text.shape}"
+            
+            # For each level of detail
+            loss = 0
+            for level_of_detail_index in range(num_levels_of_detail):
+                prediction = predictions[level_of_detail_index]
+                
+                assert prediction.shape[0] == text.shape[
+                        0], f"Predictions batch size mismatch: predictions {prediction.shape}, text {text.shape}"
 
-            predictions = predictions.view(-1, predictions.size(2))
-            target = target.view(-1)
-            assert predictions.size(0) == target.size(
-                    0), f"Predictions and target size mismatch after reshaping: predictions {predictions.size(0)}, target {target.size(0)}"
+                prediction = prediction.view(-1, prediction.size(2))
+                target = target.view(-1)
+                assert prediction.size(0) == target.size(
+                        0), f"Predictions and target size mismatch after reshaping: predictions {prediction.size(0)}, target {target.size(0)}"
 
                 # Compute loss
-            loss = criterion(predictions, target)
-            total_loss += loss.item()
+                loss += criterion(prediction, target)
+                total_loss += loss.item() / num_levels_of_detail
 
-                # Scale the loss and compute the gradients
+            # Scale the loss and compute the gradients
             scaler.scale(loss).backward()
 
-                # Update the weights using the scaled gradients
+            # Update the weights using the scaled gradients
             scaler.step(optimizer)
             scaler.update()
 
             optimizer.zero_grad()
 
-                # Calculate tokens per second for this batch
+            # Calculate tokens per second for this batch
             elapsed_time_total = time.time() - start_time_total
             elapsed_time = time.time() - start_time
             tokens_per_second = tokens_processed / elapsed_time
             avg_loss = total_loss / (i + 1)
             epoch_progress = (i + 1) / len(train_loader) * 100
 
-            print(
-                    f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
+            print(f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
                     end='')
 
         # Print a newline at the end to move to the next line in the console
@@ -322,7 +331,7 @@ def main():
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
-    val_loader = DataLoader(validation_dataset, batch_size=batch_size_validation, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
+    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
@@ -340,9 +349,9 @@ def main():
 
     for epoch in range(num_epochs):
 
-        evaluate(tokenizer, val_loader, model, criterion, epoch)
+        evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_levels_of_detail)
 
-        train(train_loader, model, criterion, optimizer, scaler, epoch)
+        train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail)
         
         save_checkpoint(epoch, model, optimizer)
 
