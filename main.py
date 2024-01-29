@@ -1,32 +1,17 @@
-batch_size = 64
-batch_size_validation = batch_size
-seq_length = 256  # The length to pad or truncate to
-embedding_dim = 128  # d_model
-public_dims = 128
-feed_forward_expand_dim = embedding_dim * 4
-num_layers = 4
-num_heads = 8
-num_epochs = 10000
-checkpoint_path = ""
-vocab_size = 4096
-use_retnet = False
-
-import torch.nn as nn
-import math
-import torch
 import os
 from multiprocessing import freeze_support
 import time
-import torch.nn.functional as F
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-PAD_IDX = 1
-
 import torch
 import torch.nn as nn
-import math
+from transformers import Adafactor
 
+from datasets import load_dataset
+from torch.utils.data import DataLoader
+from tokenizers import Tokenizer, trainers, normalizers, pre_tokenizers
+import pickle
+from tokenizers.models import BPE
+
+from torch.cuda.amp import autocast, GradScaler
 
 from mamba_ssm.models.config_mamba import MambaConfig
 from mamba_ssm.modules.mamba_simple import Mamba, Block
@@ -37,27 +22,21 @@ try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+    
+batch_size = 512
+batch_size_validation = batch_size
+seq_length = 256  # The length to pad or truncate to
+d_model = 64  # d_model
+feed_forward_expand_dim = d_model * 4
+num_layers = 4
+num_heads = 8
+num_epochs = 10000
+checkpoint_path = ""
+vocab_size = 4096
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+PAD_IDX = 1
 
-# Positional Encoding
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
-        return x
-
-
-import torch
-import torch.nn as nn
 
 
 class NetworkLayer(nn.Module):
@@ -67,7 +46,6 @@ class NetworkLayer(nn.Module):
         mamba_instance = Mamba(d_model, device=device)
         self.mamba_block = Block(dim=d_model, mixer_cls=lambda dim: mamba_instance, fused_add_norm=True)
 
-
     def forward(self, x):
         
         x, residual = self.mamba_block(x)
@@ -76,13 +54,13 @@ class NetworkLayer(nn.Module):
 
 
 class ParallelTransformerLayers(nn.Module):
-    def __init__(self, public_dims, d_model, num_heads, dim_feedforward):
+    def __init__(self, d_model, num_heads, dim_feedforward):
         super(ParallelTransformerLayers, self).__init__()
 
         self.layer_primary = NetworkLayer(d_model)
         self.layer_secondary =  NetworkLayer(d_model)
 
-    def forward(self, x_primary, x_secondary, attn_mask=None):
+    def forward(self, x_primary, x_secondary):
         x_primary_out, x_primary_redisual = self.layer_primary(x_primary)
         x_secondary_out, x_secondary_residual = self.layer_secondary(x_secondary)
         
@@ -92,17 +70,16 @@ class ParallelTransformerLayers(nn.Module):
     
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward, public_dims):
+    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward):
         super(TransformerModel, self).__init__()
 
-        self.public_dims = public_dims
         self.d_model = d_model
-        self.embedding_primary = nn.Embedding(vocab_size, public_dims)
-        self.embedding_secondary = nn.Embedding(vocab_size, public_dims)
+        self.embedding_primary = nn.Embedding(vocab_size, d_model)
+        self.embedding_secondary = nn.Embedding(vocab_size, d_model)
 
         # Parallel Transformer Layers
         self.parallel_layers = nn.ModuleList([
-            ParallelTransformerLayers(public_dims, d_model, num_heads, dim_feedforward)
+            ParallelTransformerLayers(d_model, num_heads, dim_feedforward)
             for _ in range(num_layers)])
 
         self.fc = nn.Linear(d_model, vocab_size)
@@ -111,30 +88,45 @@ class TransformerModel(nn.Module):
         x_primary = self.embedding_primary(x)
         x_secondary = self.embedding_secondary(x)
 
-        attn_mask = self.generate_square_subsequent_mask(x.size(1)).to(x.device)
 
         for layer in self.parallel_layers:
-            x_primary, x_secondary = layer(x_primary, x_secondary, attn_mask)
+            x_primary, x_secondary = layer(x_primary, x_secondary)
 
         output_primary = self.fc(x_primary)
         output_secondary = self.fc(x_secondary)
 
         return output_primary + output_secondary
 
-    def generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask.bool()
+
+def load_checkpoint(model, optimizer):
+    if os.path.exists(checkpoint_path):
+        # Load the state dictionary from the checkpoint file
+        checkpoint_load = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint_load['model_state_dict'])
+
+        if 'optimizer_state_dict' in checkpoint_load:
+            optimizer.load_state_dict(checkpoint_load['optimizer_state_dict'])
+
+        if 'epoch' in checkpoint_load:
+            start_epoch = checkpoint_load['epoch']
+
+        model.to(device)
+    else:
+        print(f"Checkpoint file {checkpoint_path} does not exist. Continuing without loading.")
+
+def save_checkpoint(epoch, model, optimizer):
+    # Save the model every 10 epochs
+    if (epoch + 1) % 10 == 0:
+        os.makedirs("transformer-grid", exist_ok=True)
+        checkpoint_save = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            # other stuff you want to save
+        }
+        torch.save(checkpoint_save, f"transformer-grid/tinystories_{epoch + 1}.pt")
 
 
-
-
-
-
-
-
-import torch.nn as nn
-from datasets import load_dataset
 def create_tokenizer_function(tokenizer):
     def tokenize_data(example):
         text = example['text']
@@ -148,7 +140,6 @@ def create_tokenizer_function(tokenizer):
         return {'input_ids': tokens}
     return tokenize_data
 
-from torch.utils.data import DataLoader
 
 def collate_batch(batch):
     new_seq_length = seq_length  # 1 for <bos>, 1 for <eos>
@@ -167,53 +158,56 @@ def collate_batch(batch):
     return text_tensor, target_tensor
 
 
+def print_parameter_count(model):
+    param_counts = {}
+    total_params = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            num_params = param.numel()
+            total_params += num_params
+            param_counts[name] = num_params
+
+    print(f"Total Trainable Parameters: {total_params}")
+
+
+def load_or_create_tokenizer_and_vocab(train_dataset):
+    tokenizer_filename = "tokenizer.pkl"
+
+    # Try to load tokenizer from files
+    try:
+        with open(tokenizer_filename, "rb") as file:
+            tokenizer = pickle.load(file)
+        print("Loaded tokenizer from files.")
+    except FileNotFoundError:
+        # Create BPE tokenizer
+        tokenizer = Tokenizer(BPE())
+
+        # Normalizer
+        tokenizer.normalizer = normalizers.Lowercase()
+
+        # Pre-tokenizer
+        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+
+        # Extract text data and write to file
+        train_text_data = [item['text'] for item in train_dataset]
+        with open("train_text.txt", "w", encoding="utf-8") as f:
+            for text in train_text_data:
+                f.write(text + "\n")
+
+        # Train the tokenizer
+        trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<unk>", "<pad>", "<bos>", "<eos>"])
+        tokenizer.train(files=["train_text.txt"], trainer=trainer)
+
+        # Save tokenizer to files
+        with open(tokenizer_filename, "wb") as file:
+            pickle.dump(tokenizer, file)
+        print("Created and saved tokenizer to files.")
+
+    return tokenizer
+
 
 def main():
     print("Using device:", device)
-
-    # Load the TinyStories dataset
-    dataset = load_dataset("roneneldan/TinyStories")
-    train_dataset = dataset['train']
-    # train_dataset, test_dataset, valid_dataset = dataset['train'], dataset['test'], dataset['validation']
-
-    from tokenizers import Tokenizer, trainers, normalizers, pre_tokenizers
-    import pickle
-    from tokenizers.models import BPE
-
-    def load_or_create_tokenizer_and_vocab(train_dataset):
-        tokenizer_filename = "tokenizer.pkl"
-
-        # Try to load tokenizer from files
-        try:
-            with open(tokenizer_filename, "rb") as file:
-                tokenizer = pickle.load(file)
-            print("Loaded tokenizer from files.")
-        except FileNotFoundError:
-            # Create BPE tokenizer
-            tokenizer = Tokenizer(BPE())
-
-            # Normalizer
-            tokenizer.normalizer = normalizers.Lowercase()
-
-            # Pre-tokenizer
-            tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-
-            # Extract text data and write to file
-            train_text_data = [item['text'] for item in train_dataset]
-            with open("train_text.txt", "w", encoding="utf-8") as f:
-                for text in train_text_data:
-                    f.write(text + "\n")
-
-            # Train the tokenizer
-            trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<unk>", "<pad>", "<bos>", "<eos>"])
-            tokenizer.train(files=["train_text.txt"], trainer=trainer)
-
-            # Save tokenizer to files
-            with open(tokenizer_filename, "wb") as file:
-                pickle.dump(tokenizer, file)
-            print("Created and saved tokenizer to files.")
-
-        return tokenizer
 
     # Load the TinyStories dataset
     dataset = load_dataset("roneneldan/TinyStories")
@@ -233,49 +227,19 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
     val_loader = DataLoader(validation_dataset, batch_size=batch_size_validation, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
 
-    # Model definition (modify to suit your DownscaleTransformerNetwork architecture)
+    # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
-    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=embedding_dim, dim_feedforward=feed_forward_expand_dim, public_dims=public_dims).to(device)
+    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim).to(device)
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-
-    from transformers import Adafactor
     optimizer = Adafactor(model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)
 
-    def count_parameters(model):
-        param_counts = {}
-        total_params = 0
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                num_params = param.numel()
-                total_params += num_params
-                param_counts[name] = num_params
+    print_parameter_count(model)
 
-        print(f"Total number of trainable parameters: {total_params}")
-        for name, count in param_counts.items():
-            print(f"{name}: {count} parameters")
+    load_checkpoint(model, optimizer)
 
-    count_parameters(model)
-
-
-    if os.path.exists(checkpoint_path):
-        # Load the state dictionary from the checkpoint file
-        checkpoint_load = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint_load['model_state_dict'])
-
-        if 'optimizer_state_dict' in checkpoint_load:
-            optimizer.load_state_dict(checkpoint_load['optimizer_state_dict'])
-
-        if 'epoch' in checkpoint_load:
-            start_epoch = checkpoint_load['epoch']
-
-        model.to(device)
-    else:
-        print(f"Checkpoint file {checkpoint_path} does not exist. Continuing without loading.")
-
-    from torch.cuda.amp import autocast, GradScaler
-    scaler = GradScaler()  # Initialize GradScaler
+    scaler = GradScaler()
 
     for epoch in range(num_epochs):
 
@@ -370,21 +334,11 @@ def main():
 
         # Print a newline at the end to move to the next line in the console
         print('')
-
-        # Save the model every 10 epochs
-        if (epoch + 1) % 10 == 0:
-            os.makedirs("transformer-grid", exist_ok=True)
-            checkpoint_save = {
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                # other stuff you want to save
-            }
-            torch.save(checkpoint_save, f"transformer-grid/tinystories_{epoch + 1}.pt")
+        
+        save_checkpoint(epoch, model, optimizer)
 
 
     print("Training completed.")
-
 
 if __name__ == '__main__':
     freeze_support() # Optional, only if you plan to create an executable
