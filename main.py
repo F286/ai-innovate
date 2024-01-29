@@ -23,16 +23,16 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
-batch_size = 512
+batch_size = 256
 seq_length = 256  # The length to pad or truncate to
-d_model = 64  # d_model
+d_model = 64
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
-num_levels_of_detail = 2
+num_levels_of_detail = 4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
@@ -54,19 +54,27 @@ class NetworkLayer(nn.Module):
 
 
 class ParallelTransformerLayers(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward):
+    def __init__(self, d_model, num_heads, dim_feedforward, num_levels_of_detail):
         super(ParallelTransformerLayers, self).__init__()
 
-        self.layer_primary = NetworkLayer(d_model)
-        self.layer_secondary =  NetworkLayer(d_model)
+        self.num_levels_of_detail = num_levels_of_detail
+        self.layers = nn.ModuleList([NetworkLayer(d_model) for _ in range(num_levels_of_detail)])
 
-    def forward(self, x_primary, x_secondary):
-        x_primary_out, x_primary_redisual = self.layer_primary(x_primary)
-        x_secondary_out, x_secondary_residual = self.layer_secondary(x_secondary)
+    def forward(self, embeddings_per_lod):
         
-        x_secondary_out = x_secondary_out + x_primary_redisual
+        # Lists for output and residual per LOD
+        outputs = []
+        previous_residuals = 0
 
-        return x_primary_out, x_secondary_out
+        for level_of_detail_index, x in enumerate(embeddings_per_lod):
+            # Apply Mamba block for given level of detail 
+            output, residual = self.layers[level_of_detail_index](x)
+            outputs.append(output + previous_residuals)
+            
+            # Residuals are applied to i + 1 final outputs.
+            previous_residuals += residual
+            
+        return outputs
     
 
 class TransformerModel(nn.Module):
@@ -74,28 +82,27 @@ class TransformerModel(nn.Module):
         super(TransformerModel, self).__init__()
 
         self.d_model = d_model
-        self.embedding_primary = nn.Embedding(vocab_size, d_model)
-        self.embedding_secondary = nn.Embedding(vocab_size, d_model)
+        self.num_levels_of_detail = num_levels_of_detail
+        
+        # Embeddings
+        self.embeddings = nn.ModuleList([nn.Embedding(vocab_size, d_model) for _ in range(num_levels_of_detail)])
 
         # Parallel Transformer Layers
         self.parallel_layers = nn.ModuleList([
-            ParallelTransformerLayers(d_model, num_heads, dim_feedforward)
+            ParallelTransformerLayers(d_model, num_heads, dim_feedforward, num_levels_of_detail)
             for _ in range(num_layers)])
 
         self.fc = nn.Linear(d_model, vocab_size)
 
     def forward(self, x):
-        x_primary = self.embedding_primary(x)
-        x_secondary = self.embedding_secondary(x)
-
+        xs = [embedding(x) for embedding in self.embeddings]
 
         for layer in self.parallel_layers:
-            x_primary, x_secondary = layer(x_primary, x_secondary)
+            xs = layer(xs)
 
-        output_primary = self.fc(x_primary)
-        output_secondary = self.fc(x_secondary)
+        outputs = [self.fc(x_out) for x_out in xs]
 
-        return [output_primary, output_secondary]
+        return outputs
 
 
 
@@ -124,7 +131,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
             # Decode the generated tokens using the tokenizer
             generated_text = tokenizer.decode(input_text[0].cpu().tolist())
 
-            print(f"Epoch {epoch}  LOD {level_of_detail_index}: {generated_text}")
+            print(f"Epoch {epoch}  Detail Index {level_of_detail_index}: {generated_text}")
 
             val_loss = 0.0
             for i, (text, target) in enumerate(val_loader):
@@ -140,7 +147,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
                     break
 
             val_loss *= 1000000 * (1 / len(val_loader)) / batch_size
-            print(f"\nValidation Loss for Epoch {epoch}  LOD {level_of_detail_index}: {val_loss:.4f}")
+            print(f"\nValidation Loss for Epoch {epoch}  Detail Index {level_of_detail_index}: {val_loss:.4f}")
         
 
 def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail):
