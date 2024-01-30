@@ -107,11 +107,14 @@ class TransformerModel(nn.Module):
 
 
 def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_levels_of_detail):
+    
+    print(f"\n-- Epoch {epoch} --\n")
+            
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():
         
         # For each level of detail
-        for level_of_detail_index in range(num_levels_of_detail):
+        for level_of_detail_index in reversed(range(num_levels_of_detail)):
             # Generate text after each epoch
             seed_text = "Once upon a time a blue"
             seed_tokens = tokenizer.encode(seed_text).ids
@@ -131,7 +134,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
             # Decode the generated tokens using the tokenizer
             generated_text = tokenizer.decode(input_text[0].cpu().tolist())
 
-            print(f"Epoch {epoch}  Detail Index {level_of_detail_index}: {generated_text}")
+            print(f"Complexity {level_of_detail_index + 1}\n\n{generated_text}")
 
             val_loss = 0.0
             for i, (text, target) in enumerate(val_loader):
@@ -147,7 +150,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_lev
                     break
 
             val_loss *= 1000000 * (1 / len(val_loader)) / batch_size
-            print(f"\nValidation Loss for Epoch {epoch}  Detail Index {level_of_detail_index}: {val_loss:.4f}")
+            print(f"\nValidation Loss: {val_loss:.4f}")
             print('')
         
 
