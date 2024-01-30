@@ -23,16 +23,17 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
-batch_size = 256
+batch_size = 128
+validation_size = 32
 seq_length = 256  # The length to pad or truncate to
-d_model = 64
+d_model = 32
 feed_forward_expand_dim = d_model * 4
-num_layers = 4
+num_layers = 6
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
-num_levels_of_detail = 4
+num_levels_of_detail = 6
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
@@ -93,6 +94,13 @@ class TransformerModel(nn.Module):
             for _ in range(num_layers)])
 
         self.fc = nn.Linear(d_model, vocab_size)
+        
+        # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
+        # self.fc = nn.Sequential(
+        #     nn.Linear(d_model, dim_feedforward),
+        #     nn.ReLU(),
+        #     nn.Linear(dim_feedforward, vocab_size)
+        # )
 
     def forward(self, x):
         xs = [embedding(x) for embedding in self.embeddings]
@@ -342,7 +350,7 @@ def main():
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
-    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
+    val_loader = DataLoader(validation_dataset, batch_size=validation_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
