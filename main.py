@@ -26,7 +26,7 @@ except ImportError:
 batch_size = 128
 validation_size = 32
 seq_length = 256  # The length to pad or truncate to
-d_model = 32
+d_model = 64
 feed_forward_expand_dim = d_model * 4
 num_layers = 6
 num_heads = 8
