@@ -26,14 +26,14 @@ except ImportError:
 batch_size = 128
 validation_size = 32
 seq_length = 256  # The length to pad or truncate to
-d_model = 64
+d_model = 32
 feed_forward_expand_dim = d_model * 4
-num_layers = 6
+num_layers = 2
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
-num_levels_of_detail = 6
+num_levels_of_detail = 8
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
@@ -93,14 +93,16 @@ class TransformerModel(nn.Module):
             ParallelTransformerLayers(d_model, num_heads, dim_feedforward, num_levels_of_detail)
             for _ in range(num_layers)])
 
-        self.fc = nn.Linear(d_model, vocab_size)
+        # self.fc_layers = nn.Linear(d_model, vocab_size)
         
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
-        # self.fc = nn.Sequential(
-        #     nn.Linear(d_model, dim_feedforward),
-        #     nn.ReLU(),
-        #     nn.Linear(dim_feedforward, vocab_size)
-        # )
+        self.fc_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, dim_feedforward),
+                nn.ReLU(),
+                nn.Linear(dim_feedforward, vocab_size)
+            )
+            for _ in range(num_levels_of_detail)])
 
     def forward(self, x):
         xs = [embedding(x) for embedding in self.embeddings]
@@ -108,7 +110,7 @@ class TransformerModel(nn.Module):
         for layer in self.parallel_layers:
             xs = layer(xs)
 
-        outputs = [self.fc(x_out) for x_out in xs]
+        outputs = [self.fc_layers[idx](x_out) for idx, x_out in enumerate(xs)]
 
         return outputs
 
