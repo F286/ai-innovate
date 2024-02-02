@@ -28,6 +28,7 @@ batch_size = 128
 validation_size = 32
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
+latent_dim=32
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
 num_heads = 8
@@ -40,7 +41,7 @@ PAD_IDX = 1
 
 
 class VAE(nn.Module):
-    def __init__(self, d_model, latent_dim, kl_loss_weight=0.0001, similarity_loss_weight=0.00001):
+    def __init__(self, d_model, latent_dim, kl_loss_weight=0.001, similarity_loss_weight=0.000001):
         super(VAE, self).__init__()
         # Encoder part: projects d_model to latent space defining mu and logvar
         self.fc_encode = nn.Linear(d_model, 2 * latent_dim)
@@ -126,7 +127,7 @@ class TransformerLayer(nn.Module):
     
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward):
+    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward, latent_dim):
         super(TransformerModel, self).__init__()
 
         self.d_model = d_model
@@ -139,7 +140,6 @@ class TransformerModel(nn.Module):
             TransformerLayer(d_model)
             for _ in range(num_layers)])
         
-        latent_dim = 32
         self.vae = VAE(d_model, latent_dim)
 
         # self.fc_layers = nn.Linear(d_model, vocab_size)
@@ -390,7 +390,7 @@ def main():
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
-    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim).to(device)
+    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim, latent_dim=latent_dim).to(device)
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
