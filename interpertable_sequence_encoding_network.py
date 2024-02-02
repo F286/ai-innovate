@@ -3,6 +3,7 @@ from multiprocessing import freeze_support
 import time
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import Adafactor
 
 from datasets import load_dataset
@@ -38,6 +39,64 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
 
 
+class VAE(nn.Module):
+    def __init__(self, d_model, latent_dim, kl_loss_weight=0.0001, similarity_loss_weight=0.00001):
+        super(VAE, self).__init__()
+        # Encoder part: projects d_model to latent space defining mu and logvar
+        self.fc_encode = nn.Linear(d_model, 2 * latent_dim)
+        # Decoder part: projects from latent_dim back to d_model
+        self.fc_decode = nn.Linear(latent_dim, d_model)
+        self.kl_loss_weight = kl_loss_weight
+        self.similarity_loss_weight = similarity_loss_weight
+
+    def reparameterize(self, mu, logvar):
+        # Applying the reparameterization trick
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        # x expected shape: [batch, seq_len, d_model]
+        batch_size, seq_len, _ = x.size()
+        
+        # Flatten x to treat each token independently
+        flat_x = x.view(-1, x.size(-1))
+        # flat_x expected shape: [batch * seq_len, d_model]
+
+        h = self.fc_encode(flat_x)
+        # h expected shape: [batch * seq_len, 2 * latent_dim]
+        
+        mu, logvar = torch.chunk(h, 2, dim=-1)
+        # mu and logvar expected shape: [batch * seq_len, latent_dim]
+        
+        z = self.reparameterize(mu, logvar)
+        # z expected shape: [batch * seq_len, latent_dim]
+        
+        decoded = self.fc_decode(z)
+        # decoded expected shape: [batch * seq_len, d_model]
+        
+        # Reshape decoded back to [batch, seq_len, d_model] for compatibility with the input
+        decoded = decoded.view(batch_size, seq_len, -1)
+        
+        # KL divergence loss computed per token
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        
+        # Similarity loss
+        # For the similarity loss, we shift the input embeddings by one token
+        # Zero-pad the start for the first token
+        shifted_x = torch.cat((torch.zeros(batch_size, 1, x.size(-1), device=x.device), x[:, :-1, :]), dim=1)
+        
+        # Calculate similarity loss per token
+        similarity_loss = F.mse_loss(decoded, shifted_x, reduction='sum')
+
+        # Total loss
+        total_loss = self.kl_loss_weight * kl_loss + self.similarity_loss_weight * similarity_loss
+
+        return decoded, total_loss
+
+
+
+    
 
 class NetworkLayer(nn.Module):
     def __init__(self, d_model):
@@ -52,39 +111,6 @@ class NetworkLayer(nn.Module):
 
         return x, residual
 
-class ModularVAE(nn.Module):
-    def __init__(self, d_model, latent_dim):
-        super(ModularVAE, self).__init__()
-        self.fc_encode = nn.Linear(d_model, 2 * latent_dim)  # Outputs mean and log variance
-        self.fc_decode = nn.Linear(latent_dim, d_model)
-        self.latent_dim = latent_dim
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def forward(self, x, previous_embedding=None):
-        h = self.fc_encode(x)
-        mu, logvar = torch.chunk(h, 2, dim=-1)
-        z = self.reparameterize(mu, logvar)
-        decoded = self.fc_decode(z)
-
-        # If previous_embedding is provided, compute custom similarity loss
-        if previous_embedding is not None:
-            similarity_loss = F.mse_loss(mu, previous_embedding)
-        else:
-            similarity_loss = 0
-
-        return decoded, mu, logvar, similarity_loss
-
-    def compute_loss(self, recon_x, x, mu, logvar, beta=1.0):
-        # Reconstruction loss (assuming the use of CrossEntropy in the outer scope)
-        recon_loss = F.cross_entropy(recon_x.view(-1, recon_x.size(-1)), x.view(-1), reduction='sum')
-        # KL divergence loss
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        # Total loss
-        return recon_loss + beta * kl_loss, recon_loss, kl_loss
 
 class TransformerLayer(nn.Module):
     def __init__(self, d_model):
@@ -114,7 +140,7 @@ class TransformerModel(nn.Module):
             for _ in range(num_layers)])
         
         latent_dim = 32
-        self.vae = ModularVAE(d_model, latent_dim)
+        self.vae = VAE(d_model, latent_dim)
 
         # self.fc_layers = nn.Linear(d_model, vocab_size)
         
@@ -127,16 +153,19 @@ class TransformerModel(nn.Module):
 
     def forward(self, x):
         x = self.embedding(x)
+        
+        additional_loss = 0 
 
         for idx, layer in enumerate(self.layers):
             x = layer(x)
             
-            # if idx == 1:
-            #     xs = [self.vae(x) for x in xs]
+            if idx == 1:
+                x, vae_loss = self.vae(x)
+                additional_loss += vae_loss
 
         x = self.fc_layer(x)
 
-        return x
+        return x, additional_loss
 
 
 
@@ -159,7 +188,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch):
         input_text = torch.tensor([seed_tokens]).long().to(device)
 
         for _ in range(120):
-            predictions = model(input_text)
+            predictions, additional_loss = model(input_text)
             next_token_idx = predictions[:, -1, :].argmax(dim=-1)
             input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
 
@@ -190,10 +219,10 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch):
             tokens_processed += batch_size * seq_length
 
             # Run the model
-            prediction = model(text)
+            prediction, additional_loss = model(text)
             
             # Prediction
-            loss = 0
+            loss = additional_loss
             
             assert prediction.shape[0] == text.shape[
                     0], f"Predictions batch size mismatch: predictions {prediction.shape}, text {text.shape}"
