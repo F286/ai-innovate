@@ -28,7 +28,7 @@ batch_size = 128
 validation_size = 32
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
-latent_dim=32
+latent_dim=128
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
 num_heads = 8
@@ -41,8 +41,12 @@ PAD_IDX = 1
 
 
 class VAE(nn.Module):
-    def __init__(self, d_model, latent_dim, kl_loss_weight=0.001, similarity_loss_weight=0.000001):
+    def __init__(self, d_model, latent_dim, kl_loss_weight=0.000001, similarity_loss_weight=0.00000001):
         super(VAE, self).__init__()
+        
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        
         # Encoder part: projects d_model to latent space defining mu and logvar
         self.fc_encode = nn.Linear(d_model, 2 * latent_dim)
         # Decoder part: projects from latent_dim back to d_model
@@ -60,9 +64,13 @@ class VAE(nn.Module):
         # x expected shape: [batch, seq_len, d_model]
         batch_size, seq_len, _ = x.size()
         
+        # normalize
+        x = self.norm1(x)
+        
         # Flatten x to treat each token independently
         flat_x = x.view(-1, x.size(-1))
         # flat_x expected shape: [batch * seq_len, d_model]
+        
 
         h = self.fc_encode(flat_x)
         # h expected shape: [batch * seq_len, 2 * latent_dim]
@@ -78,6 +86,9 @@ class VAE(nn.Module):
         
         # Reshape decoded back to [batch, seq_len, d_model] for compatibility with the input
         decoded = decoded.view(batch_size, seq_len, -1)
+        
+        # normalize
+        flat_x = self.norm2(flat_x)
         
         # KL divergence loss computed per token
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
