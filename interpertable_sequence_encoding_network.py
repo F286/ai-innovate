@@ -113,7 +113,7 @@ class NetworkLayer(nn.Module):
         super(NetworkLayer, self).__init__()
 
         mamba_instance = Mamba(d_model, device=device)
-        self.mamba_block = Block(dim=d_model, mixer_cls=lambda dim: mamba_instance, fused_add_norm=True)
+        self.mamba_block = Block(dim=d_model, mixer_cls=lambda dim: mamba_instance)
 
     def forward(self, x):
         
@@ -132,7 +132,7 @@ class TransformerLayer(nn.Module):
         # Apply Mamba block
         output, residual = self.layer(x)
         
-        return output
+        return x + output
     
 
 class TransformerModel(nn.Module):
@@ -166,9 +166,9 @@ class TransformerModel(nn.Module):
         for idx, layer in enumerate(self.layers):
             x = layer(x)
             
-            if idx == 1:
-                x, vae_loss = self.vae(x)
-                additional_loss += vae_loss
+            # if idx == 1:
+            #     x, vae_loss = self.vae(x)
+            #     additional_loss += vae_loss
 
         x = self.fc_layer(x)
 
