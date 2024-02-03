@@ -25,10 +25,9 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
 batch_size = 128
-validation_size = 32
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
-latent_dim=128
+latent_dim=32
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
 num_heads = 8
@@ -71,7 +70,6 @@ class VAE(nn.Module):
         flat_x = x.view(-1, x.size(-1))
         # flat_x expected shape: [batch * seq_len, d_model]
         
-
         h = self.fc_encode(flat_x)
         # h expected shape: [batch * seq_len, 2 * latent_dim]
         
@@ -88,7 +86,7 @@ class VAE(nn.Module):
         decoded = decoded.view(batch_size, seq_len, -1)
         
         # normalize
-        flat_x = self.norm2(flat_x)
+        decoded = self.norm2(decoded)
         
         # KL divergence loss computed per token
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -153,8 +151,6 @@ class TransformerModel(nn.Module):
         
         self.vae = VAE(d_model, latent_dim)
 
-        # self.fc_layers = nn.Linear(d_model, vocab_size)
-        
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(
                 nn.Linear(d_model, dim_feedforward),
@@ -198,7 +194,7 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch):
 
         input_text = torch.tensor([seed_tokens]).long().to(device)
 
-        for _ in range(120):
+        for _ in range(220):
             predictions, additional_loss = model(input_text)
             next_token_idx = predictions[:, -1, :].argmax(dim=-1)
             input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
@@ -397,7 +393,7 @@ def main():
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
-    val_loader = DataLoader(validation_dataset, batch_size=validation_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
+    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
