@@ -27,7 +27,8 @@ except ImportError:
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
-latent_dim=32
+latent_dim = 32
+# latent_dim = 0
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
 num_heads = 8
@@ -41,7 +42,7 @@ PAD_IDX = 1
 
 
 class VAE(nn.Module):
-    def __init__(self, d_model, latent_dim, reconstruction_loss_weight=1e-6, kl_loss_weight=1e-6, similarity_loss_weight=1e-8):
+    def __init__(self, d_model, latent_dim, reconstruction_loss_weight=1e-6, kl_loss_weight=1e-6, similarity_loss_weight=1e-9):
         super(VAE, self).__init__()
         
         self.norm_input = nn.LayerNorm(d_model)  # Normalization for input
@@ -168,8 +169,12 @@ class TransformerModel(nn.Module):
             TransformerLayer(d_model)
             for _ in range(num_layers)])
         
-        self.vae = VAE(d_model, latent_dim)
-
+        # Conditionally initialize VAE only if latent_dim is greater than 0
+        if latent_dim > 0:
+            self.vae = VAE(d_model, latent_dim)
+        else:
+            self.vae = None
+            
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(
                 nn.Linear(d_model, dim_feedforward),
@@ -185,7 +190,7 @@ class TransformerModel(nn.Module):
         for idx, layer in enumerate(self.layers):
             x = layer(x)
             
-            if idx == 1:
+            if idx == 1 and self.vae:
                 x, vae_loss = self.vae(x)
                 additional_loss += vae_loss
 
