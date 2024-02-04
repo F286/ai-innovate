@@ -27,7 +27,7 @@ except ImportError:
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
-latent_dim = 32
+latent_dim = 64
 # latent_dim = 0
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
