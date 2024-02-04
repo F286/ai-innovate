@@ -39,22 +39,26 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
 
 
+
 class VAE(nn.Module):
-    def __init__(self, d_model, latent_dim, kl_loss_weight=0.000001, similarity_loss_weight=0.00000001):
+    def __init__(self, d_model, latent_dim, reconstruction_loss_weight=1e-6, kl_loss_weight=1e-6, similarity_loss_weight=1e-8):
         super(VAE, self).__init__()
         
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm_input = nn.LayerNorm(d_model)  # Normalization for input
         
         # Encoder part: projects d_model to latent space defining mu and logvar
         self.fc_encode = nn.Linear(d_model, 2 * latent_dim)
+        self.norm_encode = nn.LayerNorm(2 * latent_dim)  # Normalization for encoder output
+        
         # Decoder part: projects from latent_dim back to d_model
         self.fc_decode = nn.Linear(latent_dim, d_model)
+        self.norm_decode = nn.LayerNorm(d_model)  # Normalization for decoder output
+        
+        self.reconstruction_loss_weight = reconstruction_loss_weight
         self.kl_loss_weight = kl_loss_weight
         self.similarity_loss_weight = similarity_loss_weight
 
     def reparameterize(self, mu, logvar):
-        # Applying the reparameterization trick
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
@@ -63,44 +67,59 @@ class VAE(nn.Module):
         # x expected shape: [batch, seq_len, d_model]
         batch_size, seq_len, _ = x.size()
         
-        # normalize
-        x = self.norm1(x)
+        # Normalize inputs so reconstruction loss is between both sides normalized
+        x = self.norm_input(x)
         
         # Flatten x to treat each token independently
         flat_x = x.view(-1, x.size(-1))
         # flat_x expected shape: [batch * seq_len, d_model]
         
+        # Encode
         h = self.fc_encode(flat_x)
         # h expected shape: [batch * seq_len, 2 * latent_dim]
+        
+        # Normalize encoder outputs
+        h = self.norm_encode(h)
         
         mu, logvar = torch.chunk(h, 2, dim=-1)
         # mu and logvar expected shape: [batch * seq_len, latent_dim]
         
+        # Reparameterize
         z = self.reparameterize(mu, logvar)
         # z expected shape: [batch * seq_len, latent_dim]
         
+        # Decode
         decoded = self.fc_decode(z)
         # decoded expected shape: [batch * seq_len, d_model]
         
+        # Normalize decoder outputs
+        decoded = self.norm_decode(decoded.view(-1, x.size(-1)))
         # Reshape decoded back to [batch, seq_len, d_model] for compatibility with the input
-        decoded = decoded.view(batch_size, seq_len, -1)
+        decoded = decoded.view(x.size())
         
-        # normalize
-        decoded = self.norm2(decoded)
+        # Traditional reconstruction loss as an auto-encoder
+        reconstruction_loss = F.mse_loss(decoded, x, reduction='sum')
         
-        # KL divergence loss computed per token
+        # Compute KL divergence loss per token
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         
-        # Similarity loss
-        # For the similarity loss, we shift the input embeddings by one token
-        # Zero-pad the start for the first token
-        shifted_x = torch.cat((torch.zeros(batch_size, 1, x.size(-1), device=x.device), x[:, :-1, :]), dim=1)
+            
+        # After decoding, assuming z is obtained and has shape [batch * seq_len, latent_dim]
+        # Reshape z to [batch, seq_len, latent_dim] to recover sequence information
+        z_reshaped = z.view(batch_size, seq_len, -1)
         
-        # Calculate similarity loss per token
-        similarity_loss = F.mse_loss(decoded, shifted_x, reduction='sum')
+        # Compute similarity loss
+        # Shifted version of z, excluding the first token of each sequence
+        original_z = z_reshaped[:, 1:, :]
+        # Original z excluding the last token of each sequence
+        shifted_z = z_reshaped[:, :-1, :]
+        
+        # Calculate similarity loss between each latent representation and its predecessor
+        similarity_loss = F.mse_loss(original_z, shifted_z, reduction='sum')
+            
 
-        # Total loss
-        total_loss = self.kl_loss_weight * kl_loss + self.similarity_loss_weight * similarity_loss
+        # Calculate total loss
+        total_loss = self.reconstruction_loss_weight * reconstruction_loss + self.kl_loss_weight * kl_loss + self.similarity_loss_weight * similarity_loss
 
         return decoded, total_loss
 
@@ -166,9 +185,9 @@ class TransformerModel(nn.Module):
         for idx, layer in enumerate(self.layers):
             x = layer(x)
             
-            # if idx == 1:
-            #     x, vae_loss = self.vae(x)
-            #     additional_loss += vae_loss
+            if idx == 1:
+                x, vae_loss = self.vae(x)
+                additional_loss += vae_loss
 
         x = self.fc_layer(x)
 
@@ -176,10 +195,7 @@ class TransformerModel(nn.Module):
 
 
 
-def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch):
-    
-    print(f"\n-- Epoch {epoch} --\n")
-            
+def evaluate(tokenizer, model, epoch):        
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():
     
@@ -205,7 +221,31 @@ def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch):
         print(f"\n{generated_text}")
 
         print('')
-        
+
+def validate(model, val_loader, criterion, device):
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0
+    total_tokens = 0  # Keep track of the total number of tokens processed
+
+    with torch.no_grad():  # No gradients needed for validation
+        for text, target in val_loader:
+            text = text.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+
+            predictions, _ = model(text)
+            predictions = predictions.view(-1, predictions.size(2))
+            target = target.view(-1)
+
+            loss = criterion(predictions, target)
+            total_loss += loss.item() * target.size(0)  # Multiply loss by the number of tokens in target
+            total_tokens += target.size(0)  # Accumulate total tokens
+            
+            if total_tokens > 1000000:
+                break
+
+    # Normalize the total loss by the total number of tokens processed
+    avg_loss = total_loss / total_tokens
+    print(f"Average Validation Loss: {avg_loss:.4f}")
 
 def train(train_loader, model, criterion, optimizer, scaler, epoch):
     model.train()
@@ -392,8 +432,8 @@ def main():
     train_dataset = train_dataset.map(tokenize_func, cache_file_name="tokenized_train")
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
-    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
+    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
@@ -410,8 +450,12 @@ def main():
     scaler = GradScaler()
 
     for epoch in range(num_epochs):
+        
+        print(f"\n-- Epoch {epoch} --\n")
+        
+        validate(model, val_loader, criterion, device)
 
-        evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch)
+        evaluate(tokenizer, model, epoch)
 
         train(train_loader, model, criterion, optimizer, scaler, epoch)
         
