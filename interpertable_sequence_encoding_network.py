@@ -27,7 +27,7 @@ except ImportError:
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
-latent_dim = 64
+latent_dim = 128
 # latent_dim = 0
 feed_forward_expand_dim = d_model * 4
 num_layers = 4
@@ -107,20 +107,21 @@ class VAE(nn.Module):
             
         # After decoding, assuming z is obtained and has shape [batch * seq_len, latent_dim]
         # Reshape z to [batch, seq_len, latent_dim] to recover sequence information
-        z_reshaped = z.view(batch_size, seq_len, -1)
+        # z_reshaped = z.view(batch_size, seq_len, -1)
         
         # Compute similarity loss
         # Shifted version of z, excluding the first token of each sequence
-        original_z = z_reshaped[:, 1:, :]
+        # original_z = z_reshaped[:, 1:, :]
         # Original z excluding the last token of each sequence
-        shifted_z = z_reshaped[:, :-1, :]
+        # shifted_z = z_reshaped[:, :-1, :]
         
         # Calculate similarity loss between each latent representation and its predecessor
-        similarity_loss = F.mse_loss(original_z, shifted_z, reduction='sum')
+        # similarity_loss = F.mse_loss(original_z, shifted_z, reduction='sum')
             
 
         # Calculate total loss
-        total_loss = self.reconstruction_loss_weight * reconstruction_loss + self.kl_loss_weight * kl_loss + self.similarity_loss_weight * similarity_loss
+        total_loss = self.reconstruction_loss_weight * reconstruction_loss + self.kl_loss_weight * kl_loss
+        #+ self.similarity_loss_weight * similarity_loss
 
         return decoded, total_loss
 
