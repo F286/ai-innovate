@@ -61,7 +61,7 @@ class InternalAttention(nn.Module):
         mask = F.softmax(mask, dim=-1)
 
         # Apply probability mask
-        x = torch.matmul(mask, x)
+        x = x * mask
         
         return x
 
@@ -85,14 +85,17 @@ class TransformerLayer(nn.Module):
     def __init__(self, d_model, dim_feedforward):
         super(TransformerLayer, self).__init__()
 
-        self.internal_attention = InternalAttention(d_model, dim_feedforward)
+        self.internal_attention1 = InternalAttention(d_model, dim_feedforward)
         self.layer = MambaLayer(d_model)
+        self.internal_attention2 = InternalAttention(d_model, dim_feedforward)
 
     def forward(self, x):
         
-        x = self.internal_attention(x)
+        x = self.internal_attention1(x)
         
         output, residual = self.layer(x)
+        
+        x = self.internal_attention2(x)
         
         return x + output
     
@@ -105,6 +108,9 @@ class TransformerModel(nn.Module):
         
         # Embeddings
         self.embedding = nn.Embedding(vocab_size, d_model)
+        
+        # Internal attention on embedding
+        self.internal_attention = InternalAttention(d_model, dim_feedforward)
 
         # Transformer Layers
         self.layers = nn.ModuleList([
@@ -122,6 +128,8 @@ class TransformerModel(nn.Module):
         x = self.embedding(x)
         
         additional_loss = 0 
+
+        x = self.internal_attention(x)
 
         for idx, layer in enumerate(self.layers):
             x = layer(x)
