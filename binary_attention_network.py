@@ -3,6 +3,7 @@ from multiprocessing import freeze_support
 import time
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import Adafactor
 
 from datasets import load_dataset
@@ -24,28 +25,74 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
 batch_size = 128
-validation_size = 32
 seq_length = 256  # The length to pad or truncate to
-d_model = 32
+d_model = 128
 feed_forward_expand_dim = d_model * 4
-num_layers = 2
+num_layers = 4
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
-num_levels_of_detail = 8
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
 
+    
+class BinarySoftmax(nn.Module):
+    def __init__(self, tau=1.0):
+        super(BinarySoftmax, self).__init__()
+        self.tau = tau  # Temperature parameter for Gumbel-Softmax
+
+    @staticmethod
+    def sample_gumbel(shape, device, eps=1e-20):
+        U = torch.rand(shape, device=device)
+        return -torch.log(-torch.log(U + eps) + eps)
+
+    def forward(self, logits):
+        gumbel_noise = self.sample_gumbel(logits.size(), logits.device)
+        y_soft = F.softmax((logits + gumbel_noise) / self.tau, dim=-1)
+        return y_soft
 
 
-class NetworkLayer(nn.Module):
+class InternalAttention(nn.Module):
+    def __init__(self, d_model, dim_feedforward):
+        super(InternalAttention, self).__init__()
+        
+        self.binary_softmax = BinarySoftmax()
+        
+        # self.normalize = nn.LayerNorm(d_model) 
+        
+        # self.fc_layer = nn.Sequential(
+        #         nn.Linear(d_model, dim_feedforward),
+        #         nn.ReLU(),
+        #         nn.Linear(dim_feedforward, d_model)
+        #     )
+
+    def forward(self, x):
+        
+        x = self.binary_softmax(x)
+        # # Normalize inputs so reconstruction loss is between both sides normalized
+        # x = self.normalize(x)
+        
+        # # Calculate raw probabilities for mask
+        # mask = self.fc_layer(x)
+        
+        # # Apply softmax to get probabilities
+        # mask = F.softmax(mask, dim=-1)
+
+        # # Apply probability mask
+        # x = x * mask
+        
+        return x
+
+    
+
+class MambaLayer(nn.Module):
     def __init__(self, d_model):
-        super(NetworkLayer, self).__init__()
+        super(MambaLayer, self).__init__()
 
         mamba_instance = Mamba(d_model, device=device)
-        self.mamba_block = Block(dim=d_model, mixer_cls=lambda dim: mamba_instance, fused_add_norm=True)
+        self.mamba_block = Block(dim=d_model, mixer_cls=lambda dim: mamba_instance)
 
     def forward(self, x):
         
@@ -54,117 +101,118 @@ class NetworkLayer(nn.Module):
         return x, residual
 
 
-class ParallelTransformerLayers(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward, num_levels_of_detail):
-        super(ParallelTransformerLayers, self).__init__()
 
-        self.num_levels_of_detail = num_levels_of_detail
-        self.layers = nn.ModuleList([NetworkLayer(d_model) for _ in range(num_levels_of_detail)])
+class TransformerLayer(nn.Module):
+    def __init__(self, d_model, dim_feedforward):
+        super(TransformerLayer, self).__init__()
 
-    def forward(self, embeddings_per_lod):
+        self.internal_attention1 = InternalAttention(d_model, dim_feedforward)
+        self.layer = MambaLayer(d_model)
+        # self.internal_attention2 = InternalAttention(d_model, dim_feedforward)
+
+    def forward(self, x):
         
-        # Lists for output and residual per LOD
-        outputs = []
-        previous_residuals = 0
-
-        for level_of_detail_index, x in enumerate(embeddings_per_lod):
-            # Apply Mamba block for given level of detail 
-            output, residual = self.layers[level_of_detail_index](x)
-            outputs.append(output + previous_residuals)
-            
-            # Residuals are applied to i + 1 final outputs.
-            previous_residuals += residual
-            
-        return outputs
-    
+        x = self.internal_attention1(x)
+        
+        output, residual = self.layer(x)
+        
+        # x = self.internal_attention2(x)
+        
+        return x + output
 
 class TransformerModel(nn.Module):
     def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward):
         super(TransformerModel, self).__init__()
 
         self.d_model = d_model
-        self.num_levels_of_detail = num_levels_of_detail
         
         # Embeddings
-        self.embeddings = nn.ModuleList([nn.Embedding(vocab_size, d_model) for _ in range(num_levels_of_detail)])
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        
+        # Internal attention on embedding
+        # self.internal_attention = InternalAttention(d_model, dim_feedforward)
 
-        # Parallel Transformer Layers
-        self.parallel_layers = nn.ModuleList([
-            ParallelTransformerLayers(d_model, num_heads, dim_feedforward, num_levels_of_detail)
+        # Transformer Layers
+        self.layers = nn.ModuleList([
+            TransformerLayer(d_model, dim_feedforward)
             for _ in range(num_layers)])
-
-        # self.fc_layers = nn.Linear(d_model, vocab_size)
         
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
-        self.fc_layers = nn.ModuleList([
-            nn.Sequential(
+        self.fc_layer = nn.Sequential(
                 nn.Linear(d_model, dim_feedforward),
                 nn.ReLU(),
                 nn.Linear(dim_feedforward, vocab_size)
             )
-            for _ in range(num_levels_of_detail)])
 
     def forward(self, x):
-        xs = [embedding(x) for embedding in self.embeddings]
+        x = self.embedding(x)
+        
+        additional_loss = 0 
 
-        for layer in self.parallel_layers:
-            xs = layer(xs)
+        # x = self.internal_atten7tion(x)
 
-        outputs = [self.fc_layers[idx](x_out) for idx, x_out in enumerate(xs)]
+        for idx, layer in enumerate(self.layers):
+            x = layer(x)
 
-        return outputs
+        x = self.fc_layer(x)
+
+        return x, additional_loss
 
 
 
-def evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_levels_of_detail):
-    
-    print(f"\n-- Epoch {epoch} --\n")
-            
+def evaluate(tokenizer, model, epoch):        
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():
-        
-        # For each level of detail
-        for level_of_detail_index in reversed(range(num_levels_of_detail)):
-            # Generate text after each epoch
-            seed_text = "Once upon a time a blue"
-            seed_tokens = tokenizer.encode(seed_text).ids
+    
+        # Generate text after each epoch
+        seed_text = "Once upon a time a blue"
+        seed_tokens = tokenizer.encode(seed_text).ids
 
-            # Find <bos> token ID
-            bos_token_id = tokenizer.token_to_id("<bos>")
-            # Prepend <bos> token ID to the seed_tokens
-            seed_tokens = [bos_token_id] + seed_tokens
+        # Find <bos> token ID
+        bos_token_id = tokenizer.token_to_id("<bos>")
+        # Prepend <bos> token ID to the seed_tokens
+        seed_tokens = [bos_token_id] + seed_tokens
 
-            input_text = torch.tensor([seed_tokens]).long().to(device)
+        input_text = torch.tensor([seed_tokens]).long().to(device)
 
-            for _ in range(120):
-                predictions = model(input_text)[level_of_detail_index]
-                next_token_idx = predictions[:, -1, :].argmax(dim=-1)
-                input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
+        for _ in range(220):
+            predictions, additional_loss = model(input_text)
+            next_token_idx = predictions[:, -1, :].argmax(dim=-1)
+            input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
 
-            # Decode the generated tokens using the tokenizer
-            generated_text = tokenizer.decode(input_text[0].cpu().tolist())
+        # Decode the generated tokens using the tokenizer
+        generated_text = tokenizer.decode(input_text[0].cpu().tolist())
 
-            print(f"Complexity {level_of_detail_index + 1}\n\n{generated_text}")
+        print(f"\n{generated_text}")
 
-            # val_loss = 0.0
-            # for i, (text, target) in enumerate(val_loader):
-            #     text = text.to(device, non_blocking=True)
-            #     target = target.to(device, non_blocking=True)
-            #     predictions = model(text)[level_of_detail_index]
-            #     predictions = predictions.view(-1, predictions.size(2))
-            #     target = target.view(-1)
-            #     loss = criterion(predictions, target)
-            #     val_loss += loss.item()
+        print('')
 
-            #     if i > 20:-0p
-            #         break
+def validate(model, val_loader, criterion, device):
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0
+    total_tokens = 0  # Keep track of the total number of tokens processed
 
-            # val_loss *= 1000000 * (1 / len(val_loader)) / batch_size
-            # print(f"\nValidation Loss: {val_loss:.4f}")
-            print('')
-        
+    with torch.no_grad():  # No gradients needed for validation
+        for text, target in val_loader:
+            text = text.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
 
-def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail):
+            predictions, _ = model(text)
+            predictions = predictions.view(-1, predictions.size(2))
+            target = target.view(-1)
+
+            loss = criterion(predictions, target)
+            total_loss += loss.item() * target.size(0)  # Multiply loss by the number of tokens in target
+            total_tokens += target.size(0)  # Accumulate total tokens
+            
+            if total_tokens > 1000000:
+                break
+
+    # Normalize the total loss by the total number of tokens processed
+    avg_loss = total_loss / total_tokens
+    print(f"Average Validation Loss: {avg_loss:.4f}")
+
+def train(train_loader, model, criterion, optimizer, scaler, epoch):
     model.train()
 
     start_time_total = time.time()
@@ -183,24 +231,22 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_o
             tokens_processed += batch_size * seq_length
 
             # Run the model
-            predictions = model(text)
+            prediction, additional_loss = model(text)
             
-            # For each level of detail
-            loss = 0
-            for level_of_detail_index in range(num_levels_of_detail):
-                prediction = predictions[level_of_detail_index]
-                
-                assert prediction.shape[0] == text.shape[
-                        0], f"Predictions batch size mismatch: predictions {prediction.shape}, text {text.shape}"
+            # Prediction
+            loss = additional_loss
+            
+            assert prediction.shape[0] == text.shape[
+                    0], f"Predictions batch size mismatch: predictions {prediction.shape}, text {text.shape}"
 
-                prediction = prediction.view(-1, prediction.size(2))
-                target = target.view(-1)
-                assert prediction.size(0) == target.size(
-                        0), f"Predictions and target size mismatch after reshaping: predictions {prediction.size(0)}, target {target.size(0)}"
+            prediction = prediction.view(-1, prediction.size(2))
+            target = target.view(-1)
+            assert prediction.size(0) == target.size(
+                    0), f"Predictions and target size mismatch after reshaping: predictions {prediction.size(0)}, target {target.size(0)}"
 
-                # Compute loss
-                loss += criterion(prediction, target)
-                total_loss += loss.item() / num_levels_of_detail
+            # Compute loss
+            loss += criterion(prediction, target)
+            total_loss += loss.item()
 
             # Scale the loss and compute the gradients
             scaler.scale(loss).backward()
@@ -351,8 +397,8 @@ def main():
     train_dataset = train_dataset.map(tokenize_func, cache_file_name="tokenized_train")
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=8, pin_memory=True, prefetch_factor=2)
-    val_loader = DataLoader(validation_dataset, batch_size=validation_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
+    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
@@ -369,10 +415,14 @@ def main():
     scaler = GradScaler()
 
     for epoch in range(num_epochs):
+        
+        print(f"\n-- Epoch {epoch} --\n")
+        
+        validate(model, val_loader, criterion, device)
 
-        evaluate(tokenizer, val_loader, model, criterion, batch_size, epoch, num_levels_of_detail)
+        evaluate(tokenizer, model, epoch)
 
-        train(train_loader, model, criterion, optimizer, scaler, epoch, num_levels_of_detail)
+        train(train_loader, model, criterion, optimizer, scaler, epoch)
         
         save_checkpoint(epoch, model, optimizer)
 

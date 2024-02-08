@@ -39,31 +39,44 @@ PAD_IDX = 1
 
 
 class InternalAttention(nn.Module):
-    def __init__(self, d_model, dim_feedforward):
+    def __init__(self, d_model, dim_feedforward, initial_spikiness=4.0, spikiness_loss=0.001):
         super(InternalAttention, self).__init__()
         
-        self.normalize = nn.LayerNorm(d_model) 
+        self.normalize1 = nn.LayerNorm(d_model) 
+        self.normalize2 = nn.LayerNorm(d_model) 
         
         self.fc_layer = nn.Sequential(
                 nn.Linear(d_model, dim_feedforward),
                 nn.ReLU(),
                 nn.Linear(dim_feedforward, d_model)
             )
+        
+        # Initialize attention spikiness as a learnable parameter
+        self.attention_spikiness = nn.Parameter(torch.tensor([initial_spikiness]))
+        
+        self.spikiness_loss = spikiness_loss
+        self.target_spikiness = 1
 
     def forward(self, x):
-        # Normalize inputs so reconstruction loss is between both sides normalized
-        x = self.normalize(x)
+        
+        x = self.normalize1(x)
         
         # Calculate raw probabilities for mask
         mask = self.fc_layer(x)
         
+        # normalize mask so scaling is on 'on a dial' and weights don't increase over time
+        mask = self.normalize2(mask)
+        
+        # scale mask
+        mask = mask * self.attention_spikiness
+        
         # Apply softmax to get probabilities
         mask = F.softmax(mask, dim=-1)
 
-        # Apply probability mask
+        # Apply probability masks
         x = x * mask
         
-        return x
+        return x, 0#(self.target_spikiness - self.attention_spikiness) * self.spikiness_loss
 
     
 
@@ -91,13 +104,17 @@ class TransformerLayer(nn.Module):
 
     def forward(self, x):
         
-        x = self.internal_attention1(x)
+        additional_loss = 0 
+        
+        x, loss1 = self.internal_attention1(x)
+        additional_loss += loss1
         
         output, residual = self.layer(x)
         
-        x = self.internal_attention2(x)
+        x, loss2 = self.internal_attention2(x)
+        additional_loss += loss2
         
-        return x + output
+        return x + output, additional_loss
     
 
 class TransformerModel(nn.Module):
@@ -129,10 +146,12 @@ class TransformerModel(nn.Module):
         
         additional_loss = 0 
 
-        x = self.internal_attention(x)
+        x, initial_loss = self.internal_attention(x)
+        additional_loss += additional_loss
 
         for idx, layer in enumerate(self.layers):
-            x = layer(x)
+            x, loss = layer(x)
+            additional_loss += loss
 
         x = self.fc_layer(x)
 
