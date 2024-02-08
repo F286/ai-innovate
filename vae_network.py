@@ -42,7 +42,7 @@ PAD_IDX = 1
 
 
 class VAE(nn.Module):
-    def __init__(self, d_model, latent_dim, reconstruction_loss_weight=1e-6, kl_loss_weight=1e-6):
+    def __init__(self, d_model, latent_dim, reconstruction_loss_weight=1e-6, kl_loss_weight=1e-6, correlation_loss_weight=1e-6):
         super(VAE, self).__init__()
         
         self.norm_input = nn.LayerNorm(d_model)  # Normalization for input
@@ -57,11 +57,28 @@ class VAE(nn.Module):
         
         self.reconstruction_loss_weight = reconstruction_loss_weight
         self.kl_loss_weight = kl_loss_weight
+        
+        self.correlation_loss_weight = correlation_loss_weight
+        self.latent_dim = latent_dim
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
+
+    def correlation_loss(self, z):
+        batch_size, num_latent = z.size()
+        # Compute the covariance matrix
+        mean_z = torch.mean(z, dim=0, keepdim=True)
+        z_centered = z - mean_z
+        cov_matrix = z_centered.T @ z_centered / (batch_size - 1)
+        # Compute the correlation matrix from the covariance matrix
+        std_z = torch.sqrt(torch.diag(cov_matrix))
+        correlation_matrix = cov_matrix / torch.outer(std_z, std_z)
+        # Penalize the sum of squared off-diagonal elements
+        off_diagonal_mask = ~torch.eye(num_latent, dtype=bool, device=z.device)
+        correlation_loss = (correlation_matrix[off_diagonal_mask]).pow(2).sum()
+        return correlation_loss
 
     def forward(self, x):
         # x expected shape: [batch, seq_len, d_model]
@@ -105,6 +122,12 @@ class VAE(nn.Module):
         
         # Calculate total loss
         total_loss = self.reconstruction_loss_weight * reconstruction_loss + self.kl_loss_weight * kl_loss
+
+        # Calculate correlation loss
+        corr_loss = self.correlation_loss(z.reshape(batch_size, -1, self.latent_dim).mean(dim=1))
+
+        # Update total loss with correlation loss
+        total_loss += self.correlation_loss_weight * corr_loss
 
         return decoded, total_loss
 
