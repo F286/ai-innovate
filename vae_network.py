@@ -24,7 +24,7 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
-batch_size = 128
+batch_size = 512
 seq_length = 256  # The length to pad or truncate to
 d_model = 128
 latent_dim = 128
@@ -68,13 +68,16 @@ class VAE(nn.Module):
 
     def correlation_loss(self, z):
         batch_size, num_latent = z.size()
+        
+        epsilon = 1e-8
         # Compute the covariance matrix
         mean_z = torch.mean(z, dim=0, keepdim=True)
         z_centered = z - mean_z
         cov_matrix = z_centered.T @ z_centered / (batch_size - 1)
+        cov_matrix += torch.eye(num_latent, device=z.device) * epsilon
         # Compute the correlation matrix from the covariance matrix
         std_z = torch.sqrt(torch.diag(cov_matrix))
-        correlation_matrix = cov_matrix / torch.outer(std_z, std_z)
+        correlation_matrix = cov_matrix / (torch.outer(std_z, std_z) + epsilon)
         # Penalize the sum of squared off-diagonal elements
         off_diagonal_mask = ~torch.eye(num_latent, dtype=bool, device=z.device)
         correlation_loss = (correlation_matrix[off_diagonal_mask]).pow(2).sum()
