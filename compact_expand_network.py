@@ -24,13 +24,13 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
+from compact_expand_module import CompactExpandModule
+    
 batch_size = 128
-seq_length = 256  # The length to pad or truncate to
+seq_length = 256
 d_model = 256
-latent_dim = 128
-# latent_dim = 0
 feed_forward_expand_dim = d_model * 4
-num_layers = 32
+num_layers = 4
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
@@ -69,7 +69,7 @@ class TransformerLayer(nn.Module):
     
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward, latent_dim):
+    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward, keep_token_ids):
         super(TransformerModel, self).__init__()
 
         self.d_model = d_model
@@ -77,10 +77,21 @@ class TransformerModel(nn.Module):
         # Embeddings
         self.embedding = nn.Embedding(vocab_size, d_model)
 
-        # Transformer Layers
-        self.layers = nn.ModuleList([
+        # Attention layers
+        self.layers0 = nn.ModuleList([
+            TransformerLayer(d_model)
+            for _ in range(1)])
+        
+        self.layers1 = nn.ModuleList([
             TransformerLayer(d_model)
             for _ in range(num_layers)])
+        
+        self.layers2 = nn.ModuleList([
+            TransformerLayer(d_model)
+            for _ in range(1)])
+        
+        # Compact expand
+        self.compact_expand = CompactExpandModule(keep_token_ids, sequence_length=seq_length, embedding_dimension=d_model, compacted_max_sequence_length=64)
         
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(
@@ -89,12 +100,22 @@ class TransformerModel(nn.Module):
                 nn.Linear(dim_feedforward, vocab_size)
             )
 
-    def forward(self, x):
-        x = self.embedding(x)
+    def forward(self, token_ids):
+        x = self.embedding(token_ids)
         
         additional_loss = 0 
+        
+        for idx, layer in enumerate(self.layers0):
+            x = layer(x)
+            
+        self.compact_expand(x, token_ids, is_compacting=True)
 
-        for idx, layer in enumerate(self.layers):
+        for idx, layer in enumerate(self.layers1):
+            x = layer(x)
+            
+        self.compact_expand(x, is_compacting=False)
+            
+        for idx, layer in enumerate(self.layers2):
             x = layer(x)
 
         x = self.fc_layer(x)
@@ -345,7 +366,14 @@ def main():
 
     # Model definition
     assert(vocab_size == tokenizer.get_vocab_size())
-    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim, latent_dim=latent_dim).to(device)
+    
+    # Common end-of-sentence specifiers
+    eos_tokens = ['.', '!', '?']
+
+    # Retrieve their token IDs from the tokenizer
+    keep_token_ids = torch.tensor([tokenizer.token_to_id(tok) for tok in eos_tokens], device=device)
+
+    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim, keep_token_ids=keep_token_ids).to(device)
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)

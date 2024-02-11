@@ -4,11 +4,12 @@ import torch.nn as nn
 # Implementing the updated CompactExpandModule to handle batches and running the updated test function
 
 class CompactExpandModule(nn.Module):
-    def __init__(self, keep_token_ids, sequence_length, embedding_dimension):
+    def __init__(self, keep_token_ids, sequence_length, embedding_dimension, compacted_max_sequence_length):
         super(CompactExpandModule, self).__init__()
-        self.keep_token_ids = torch.tensor(keep_token_ids)
+        self.keep_token_ids = keep_token_ids
         self.sequence_length = sequence_length
         self.embedding_dimension = embedding_dimension
+        self.compacted_max_sequence_length = compacted_max_sequence_length
         self.kept_positions_batch = None
 
     def forward(self, input_embeddings, token_ids=None, is_compacting=True):
@@ -34,7 +35,9 @@ class CompactExpandModule(nn.Module):
 
         self.kept_positions_batch = kept_positions_batch
 
-        return torch.nested.nested_tensor(compacted_embeddings_batch)
+        compacted_nested_tensor = torch.nested.nested_tensor(compacted_embeddings_batch)
+        # Output shape is [batch_size, sequence_length, embedding_dimension]
+        return torch.nested.to_padded_tensor(compacted_nested_tensor, 0.0, (len(compacted_embeddings_batch), self.compacted_max_sequence_length, self.embedding_dimension))
 
     def _expand(self, compacted_embeddings_batch) -> torch.nested.nested_tensor:
         assert self.kept_positions_batch is not None, "Expand can only be called after compact"
@@ -43,7 +46,7 @@ class CompactExpandModule(nn.Module):
 
         for compacted_embeddings, original_positions in zip(compacted_embeddings_batch, self.kept_positions_batch):
             original_length = max(original_positions) + 1 if len(original_positions) > 0 else 0
-            expanded_embeddings = torch.zeros((original_length, self.embedding_dimension), dtype=compacted_embeddings.dtype)
+            expanded_embeddings = torch.zeros((original_length, self.embedding_dimension), dtype=compacted_embeddings.dtype, device=compacted_embeddings_batch.device)
             if len(original_positions) > 0:
                 expanded_embeddings.scatter_(0, original_positions.unsqueeze(-1).expand(-1, self.embedding_dimension), compacted_embeddings)
 
@@ -54,25 +57,26 @@ class CompactExpandModule(nn.Module):
         # Output shape is [batch_size, sequence_length, embedding_dimension]
         return torch.nested.to_padded_tensor(expanded_nested_tensor, 0.0, (len(batch_expanded_embeddings), self.sequence_length, self.embedding_dimension))
 
-# Adjusted test function for batch processing
-def test_compact_expand_module_with_batches():
-    embedding_dimension = 4
-    sequence_length = 5
-    keep_token_ids = [2, 3]  # Tokens to keep
-    module = CompactExpandModule(keep_token_ids, sequence_length, embedding_dimension)
+# # Adjusted test function for batch processing
+# def test_compact_expand_module_with_batches():
+#     embedding_dimension = 4
+#     sequence_length = 5
+#     compacted_max_sequence_length = 8
+#     keep_token_ids = [2, 3]  # Tokens to keep
+#     module = CompactExpandModule(keep_token_ids, sequence_length, embedding_dimension, compacted_max_sequence_length)
 
-    # Test data for two batches
-    token_ids = torch.tensor([[0, 1, 2, 3, 4], [2, 1, 3, 4, 2]])
-    input_embeddings = torch.arange(0., 10., step=0.25).reshape(2, 5, 4)
+#     # Test data for two batches
+#     token_ids = torch.tensor([[0, 1, 2, 3, 4], [2, 1, 3, 4, 2]])
+#     input_embeddings = torch.arange(0., 10., step=0.25).reshape(2, 5, 4)
 
-    # Perform compacting
-    compacted_embeddings_batch = module(input_embeddings, token_ids=token_ids, is_compacting=True)
+#     # Perform compacting
+#     compacted_embeddings_batch = module(input_embeddings, token_ids=token_ids, is_compacting=True)
 
-    # Perform expanding
-    expanded_embeddings_batch = module(compacted_embeddings_batch, is_compacting=False)
+#     # Perform expanding
+#     expanded_embeddings_batch = module(compacted_embeddings_batch, is_compacting=False)
 
-    print("Batch processing tests executed. Please verify results manually.")
+#     print("Batch processing tests executed. Please verify results manually.")
 
-if __name__ == "__main__":
-    # Execute the batch processing test only if the script is run directly
-    test_compact_expand_module_with_batches()
+# if __name__ == "__main__":
+#     # Execute the batch processing test only if the script is run directly
+#     test_compact_expand_module_with_batches()
