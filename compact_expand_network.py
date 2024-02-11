@@ -30,7 +30,7 @@ batch_size = 128
 seq_length = 256
 d_model = 256
 feed_forward_expand_dim = d_model * 4
-num_layers = 4
+num_layers = 16
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
@@ -91,7 +91,8 @@ class TransformerModel(nn.Module):
             for _ in range(1)])
         
         # Compact expand
-        self.compact_expand = CompactExpandModule(keep_token_ids, sequence_length=seq_length, embedding_dimension=d_model, compacted_max_sequence_length=64)
+        compacted_max_sequence_length = 32
+        self.compact_expand = CompactExpandModule(keep_token_ids, sequence_length=seq_length, embedding_dimension=d_model, compacted_max_sequence_length=compacted_max_sequence_length)
         
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(

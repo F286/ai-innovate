@@ -25,19 +25,33 @@ class CompactExpandModule(nn.Module):
         compacted_embeddings_batch = []
         kept_positions_batch = []
 
+        # Determine the maximum number of tokens to keep across all sequences
+        max_kept_tokens = 0
+
         for i in range(batch_size):
             keep_masks = torch.isin(token_ids[i], self.keep_token_ids)
             kept_positions = keep_masks.nonzero(as_tuple=True)[0]
-            compacted_embeddings = input_embeddings[i][keep_masks]
+            
+            # Clamp the kept positions to the compacted_max_sequence_length
+            if len(kept_positions) > self.compacted_max_sequence_length:
+                kept_positions = kept_positions[:self.compacted_max_sequence_length]
+            
+            compacted_embeddings = input_embeddings[i][keep_masks][:self.compacted_max_sequence_length]
             
             compacted_embeddings_batch.append(compacted_embeddings)
             kept_positions_batch.append(kept_positions)
+            
+            # Update the maximum number of kept tokens if necessary
+            max_kept_tokens = max(max_kept_tokens, len(compacted_embeddings))
 
         self.kept_positions_batch = kept_positions_batch
 
+        # Padding the nested tensor to have uniform sequence lengths
         compacted_nested_tensor = torch.nested.nested_tensor(compacted_embeddings_batch)
-        # Output shape is [batch_size, sequence_length, embedding_dimension]
-        return torch.nested.to_padded_tensor(compacted_nested_tensor, 0.0, (len(compacted_embeddings_batch), self.compacted_max_sequence_length, self.embedding_dimension))
+        # Ensure the output size matches or exceeds the largest sequence length in the NestedTensor
+        padded_output_size = (batch_size, max_kept_tokens, self.embedding_dimension)
+        return torch.nested.to_padded_tensor(compacted_nested_tensor, 0.0, padded_output_size)
+
 
     def _expand(self, compacted_embeddings_batch) -> torch.nested.nested_tensor:
         assert self.kept_positions_batch is not None, "Expand can only be called after compact"
