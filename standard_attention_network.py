@@ -24,13 +24,13 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
-batch_size = 512
+batch_size = 128
 seq_length = 256  # The length to pad or truncate to
-d_model = 128
+d_model = 256
 latent_dim = 128
 # latent_dim = 0
 feed_forward_expand_dim = d_model * 4
-num_layers = 4
+num_layers = 32
 num_heads = 8
 num_epochs = 10000
 checkpoint_path = ""
@@ -258,7 +258,7 @@ def create_tokenizer_function(tokenizer):
 
 
 def collate_batch(batch):
-    new_seq_length = seq_length  # 1 for <bos>, 1 for <eos>
+    new_seq_length = seq_length 
 
     # Filter out short sequences
     valid_items = [item['input_ids'] for item in batch if len(item['input_ids']) >= 16]
