@@ -73,6 +73,6 @@ def test_compact_expand_module_with_batches():
 
     print("Batch processing tests executed. Please verify results manually.")
 
-# Execute the batch processing test
-test_compact_expand_module_with_batches()
-
+if __name__ == "__main__":
+    # Execute the batch processing test only if the script is run directly
+    test_compact_expand_module_with_batches()
