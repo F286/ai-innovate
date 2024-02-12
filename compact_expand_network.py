@@ -25,6 +25,7 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
     
 from compact_expand_module import CompactExpandModule
+from sentence_attention_module import SentenceAttentionModule
     
 batch_size = 128
 seq_length = 256
@@ -68,6 +69,17 @@ class TransformerLayer(nn.Module):
         return x + output
     
 
+class SentenceLocalLayer(nn.Module):
+    def __init__(self, sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads):
+        super(SentenceLocalLayer, self).__init__()
+
+        self.layer = SentenceAttentionModule(sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads)
+
+    def forward(self, x, token_ids):
+        output = self.layer(x, token_ids)
+        
+        return x + output
+
 class TransformerModel(nn.Module):
     def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward, keep_token_ids):
         super(TransformerModel, self).__init__()
@@ -79,7 +91,7 @@ class TransformerModel(nn.Module):
 
         # Attention layers
         self.layers0 = nn.ModuleList([
-            TransformerLayer(d_model)
+            SentenceLocalLayer(keep_token_ids, seq_length, d_model, num_heads)
             for _ in range(1)])
         
         self.layers1 = nn.ModuleList([
@@ -87,7 +99,7 @@ class TransformerModel(nn.Module):
             for _ in range(num_layers)])
         
         self.layers2 = nn.ModuleList([
-            TransformerLayer(d_model)
+            SentenceLocalLayer(keep_token_ids, seq_length, d_model, num_heads)
             for _ in range(1)])
         
         # Compact expand
@@ -107,7 +119,7 @@ class TransformerModel(nn.Module):
         additional_loss = 0 
         
         for idx, layer in enumerate(self.layers0):
-            x = layer(x)
+            x = layer(x, token_ids)
             
         self.compact_expand(x, token_ids, is_compacting=True)
 
@@ -117,7 +129,7 @@ class TransformerModel(nn.Module):
         self.compact_expand(x, is_compacting=False)
             
         for idx, layer in enumerate(self.layers2):
-            x = layer(x)
+            x = layer(x, token_ids)
 
         x = self.fc_layer(x)
 
