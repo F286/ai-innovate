@@ -29,10 +29,10 @@ from sentence_attention_module import SentenceAttentionModule
     
 batch_size = 128
 seq_length = 256
-d_model = 128
+d_model = 256
 feed_forward_expand_dim = d_model * 4
-num_layers = 4 # +2 w/ all tokens at start and end
-num_heads = 8
+num_layers = 30 # +2 w/ all tokens at start and end
+num_heads = 2
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
