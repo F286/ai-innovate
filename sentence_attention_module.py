@@ -10,14 +10,39 @@ class SentenceAttentionModule(nn.Module):
         self.window_size = 16
 
     def forward(self, input_embeddings, token_ids):
-        
         batch_size, seq_len, d_model = input_embeddings.shape
         
-        attention_mask = self.generate_attention_masks(seq_len, self.window_size, input_embeddings.device)
+        # Generate a sliding window attention mask for each sequence in the batch
+        attention_mask = self.generate_sliding_window_attention_masks(seq_len, self.window_size, input_embeddings.device)
         
+        # Apply multihead attention with the sliding window attention mask
         attended_output, _ = self.multihead_attention(input_embeddings, input_embeddings, input_embeddings,
-                                                      attn_mask=attention_mask, is_causal=True)
+                                                      attn_mask=attention_mask)
         return attended_output
+
+    def generate_sliding_window_attention_masks(self, seq_len, window_size, device):
+        # Initialize the attention mask with False values
+        attention_mask = torch.full((seq_len, seq_len), float('-inf'), device=device)
+
+        # Populate the mask for sliding window attention
+        for i in range(seq_len):
+            left = max(i - window_size // 2, 0)
+            right = min(i + window_size // 2 + 1, seq_len)
+            attention_mask[i, left:right] = 0  # Set to 0 (or True) to allow attention within the window
+
+        # The nn.MultiheadAttention expects a mask where 0 means "attend" and "-inf" means "do not attend"
+        # So, we do not need to invert the mask values as we're setting "do not attend" to "-inf" directly
+        return attention_mask
+    
+    # def forward(self, input_embeddings, token_ids):
+        
+    #     batch_size, seq_len, d_model = input_embeddings.shape
+        
+    #     attention_mask = self.generate_attention_masks(seq_len, self.window_size, input_embeddings.device)
+        
+    #     attended_output, _ = self.multihead_attention(input_embeddings, input_embeddings, input_embeddings,
+    #                                                   attn_mask=attention_mask, is_causal=True)
+    #     return attended_output
 
     # def generate_attention_masks(self, token_ids):
     #     batch_size, seq_len = token_ids.shape
@@ -33,24 +58,7 @@ class SentenceAttentionModule(nn.Module):
     #                     break
                     
     #                 attention_masks[batch_index, sequence_index, look_at_index] = True
-                        
-
-    def generate_attention_masks(self, seq_len, window_size, device):
-        attention_masks = torch.zeros((seq_len, seq_len), dtype=torch.bool, device=device)
-
-        for sequence_index in range(seq_len):
-            i = 0
-            # from sequence length index (inclusive) to 0 (inclusive)
-            for look_at_index in range(sequence_index, -1, -1):  # looking at another token in same sequence
-                
-                # stop adding to attention mask if we hit a sentence breaking token
-                if i > window_size:
-                    break
-                i += 1
-                
-                attention_masks[sequence_index, look_at_index] = True
                     
-        return attention_masks
                         
                 
 

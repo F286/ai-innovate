@@ -31,7 +31,7 @@ batch_size = 128
 seq_length = 256
 d_model = 256
 feed_forward_expand_dim = d_model * 4
-num_layers = 30 # +2 w/ all tokens at start and end
+num_layers = 28 # +4 w/ all tokens at start and end
 num_heads = 2
 num_epochs = 10000
 checkpoint_path = ""
@@ -91,16 +91,16 @@ class TransformerModel(nn.Module):
 
         # Attention layers
         self.layers0 = nn.ModuleList([
-            SentenceLocalLayer(keep_token_ids, seq_length, d_model, num_heads)
-            for _ in range(1)])
+            TransformerLayer(d_model)
+            for _ in range(2)])
         
         self.layers1 = nn.ModuleList([
             TransformerLayer(d_model)
             for _ in range(num_layers)])
         
         self.layers2 = nn.ModuleList([
-            SentenceLocalLayer(keep_token_ids, seq_length, d_model, num_heads)
-            for _ in range(1)])
+            TransformerLayer(d_model)
+            for _ in range(2)])
         
         # Compact expand
         compacted_max_sequence_length = 32
