@@ -119,7 +119,7 @@ class TransformerModel(nn.Module):
         additional_loss = 0 
         
         for idx, layer in enumerate(self.layers0):
-            x = layer(x, token_ids)
+            x = layer(x)
             
         self.compact_expand(x, token_ids, is_compacting=True)
 
@@ -129,7 +129,7 @@ class TransformerModel(nn.Module):
         self.compact_expand(x, is_compacting=False)
             
         for idx, layer in enumerate(self.layers2):
-            x = layer(x, token_ids)
+            x = layer(x)
 
         x = self.fc_layer(x)
 
