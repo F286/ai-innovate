@@ -35,6 +35,7 @@ num_layers = 28 # +4 w/ all tokens at start and end
 num_heads = 2
 num_epochs = 10000
 checkpoint_path = ""
+checkpoint_save_every_epochs = 1
 vocab_size = 4096
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -266,7 +267,7 @@ def load_checkpoint(model, optimizer):
 
 def save_checkpoint(epoch, model, optimizer):
     # Save the model every 10 epochs
-    if (epoch + 1) % 10 == 0:
+    if (epoch + 1) % checkpoint_save_every_epochs == 0:
         os.makedirs("transformer-grid", exist_ok=True)
         checkpoint_save = {
             'epoch': epoch,
