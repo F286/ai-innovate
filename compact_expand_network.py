@@ -4,6 +4,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 from transformers import Adafactor
 
 from datasets import load_dataset
@@ -34,7 +35,9 @@ feed_forward_expand_dim = d_model * 4
 num_layers = 28 # +4 w/ all tokens at start and end
 num_heads = 2
 num_epochs = 10000
-checkpoint_path = ""
+checkpoint_directory = "compact_expand/"
+checkpoint_filename = "none"
+log_directory = checkpoint_directory
 checkpoint_save_every_epochs = 1
 vocab_size = 4096
 
@@ -138,7 +141,66 @@ class TransformerModel(nn.Module):
 
 
 
-def evaluate(tokenizer, model, epoch):        
+class TensorBoardCheckpointWriter:
+    def __init__(self, log_dir=None, checkpoint_dir="checkpoints"):
+        if log_dir is None:
+            log_dir = f"runs/train_{int(time.time())}"
+        self.writer = SummaryWriter(log_dir)
+        self.checkpoint_dir = checkpoint_dir
+        self.epoch = 0  # Initialize internal epoch counter
+        self.global_step = 0  # Initialize internal global step counter
+        print(f"TensorBoard logs will be saved to {log_dir}")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.writer.close()
+        if exc_type is not None:
+            print(f"Exception occurred: {exc_val}")
+        return False
+
+    def add_scalar(self, tag, scalar_value):
+        self.writer.add_scalar(tag, scalar_value, self.global_step, time.time())
+        
+    def add_text(self, tag, text_string):
+        self.writer.add_text(tag, text_string, self.global_step, time.time())
+
+    def save_checkpoint(self, model, optimizer, additional_info=None):
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{self.epoch}.pt")
+        checkpoint = {
+            'epoch': self.epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'global_step': self.global_step
+        }
+        if additional_info is not None:
+            checkpoint.update(additional_info)
+        torch.save(checkpoint, checkpoint_path)
+        print(f"Checkpoint saved to {checkpoint_path}")
+
+    def load_checkpoint(self, model, optimizer, filename):
+        checkpoint_path = os.path.join(self.checkpoint_dir, filename)
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.epoch = checkpoint.get('epoch', -1)
+            self.global_step = checkpoint.get('global_step', 0) 
+            print(f"Checkpoint loaded from {checkpoint_path}, epoch {self.epoch}, global step {self.global_step}")
+            return self.epoch
+        else:
+            print(f"No checkpoint found at {checkpoint_path}")
+            return -1
+
+    def increment_epoch(self):
+        self.epoch += 1
+
+    def increment_global_step(self):
+        self.global_step += 1
+
+def evaluate(tokenizer, model, writer_checkpoint_manager:TensorBoardCheckpointWriter):        
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():
     
@@ -161,11 +223,12 @@ def evaluate(tokenizer, model, epoch):
         # Decode the generated tokens using the tokenizer
         generated_text = tokenizer.decode(input_text[0].cpu().tolist())
 
-        print(f"\n{generated_text}")
+        writer_checkpoint_manager.add_text("Evaluate/text", generated_text)
+        # print(f"\n{generated_text}")
 
-        print('')
+        # print('')
 
-def validate(model, val_loader, criterion, device):
+def validate(model, val_loader, criterion, device, writer_checkpoint_manager:TensorBoardCheckpointWriter):
     model.eval()  # Set the model to evaluation mode
     total_loss = 0.0
     total_tokens = 0  # Keep track of the total number of tokens processed
@@ -188,9 +251,10 @@ def validate(model, val_loader, criterion, device):
 
     # Normalize the total loss by the total number of tokens processed
     avg_loss = total_loss / total_tokens
-    print(f"Average Validation Loss: {avg_loss:.4f}")
+    # print(f"Average Validation Loss: {avg_loss:.4f}")
+    writer_checkpoint_manager.add_scalar("Loss/validate", avg_loss)
 
-def train(train_loader, model, criterion, optimizer, scaler, epoch):
+def train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_manager:TensorBoardCheckpointWriter):
     model.train()
 
     start_time_total = time.time()
@@ -242,40 +306,16 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch):
             avg_loss = total_loss / (i + 1)
             epoch_progress = (i + 1) / len(train_loader) * 100
 
-            print(f"\rEpoch {epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
-                    end='')
+            # print(f"\rEpoch {writer_checkpoint_manager.epoch + 1}: {elapsed_time_total:.0f} seconds ({tokens_per_second:.0f} tok/s), Loss: {avg_loss:.4f}, Progress: {epoch_progress:.2f}%",
+                    # end='')
+            
+            writer_checkpoint_manager.add_scalar("Loss/train", avg_loss)
+            writer_checkpoint_manager.add_scalar("Tokens per second", tokens_per_second)
+            
+            writer_checkpoint_manager.increment_global_step()
 
     # Print a newline at the end to move to the next line in the console
-    print('')
-
-
-def load_checkpoint(model, optimizer):
-    if os.path.exists(checkpoint_path):
-        # Load the state dictionary from the checkpoint file
-        checkpoint_load = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint_load['model_state_dict'])
-
-        if 'optimizer_state_dict' in checkpoint_load:
-            optimizer.load_state_dict(checkpoint_load['optimizer_state_dict'])
-
-        if 'epoch' in checkpoint_load:
-            start_epoch = checkpoint_load['epoch']
-
-        model.to(device)
-    else:
-        print(f"Checkpoint file {checkpoint_path} does not exist. Continuing without loading.")
-
-def save_checkpoint(epoch, model, optimizer):
-    # Save the model every 10 epochs
-    if (epoch + 1) % checkpoint_save_every_epochs == 0:
-        os.makedirs("transformer-grid", exist_ok=True)
-        checkpoint_save = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            # other stuff you want to save
-        }
-        torch.save(checkpoint_save, f"transformer-grid/tinystories_{epoch + 1}.pt")
+    # print('')
 
 
 def create_tokenizer_function(tokenizer):
@@ -395,24 +435,28 @@ def main():
 
     print_parameter_count(model)
 
-    load_checkpoint(model, optimizer)
+    with TensorBoardCheckpointWriter(log_dir=log_directory, checkpoint_dir=checkpoint_directory) as writer_checkpoint_manager:
+        # Your training/validation loop and any checkpoint saving/loading logic
+        # Use writer_checkpoint_manager for logging and checkpointing
 
-    scaler = GradScaler()
+        writer_checkpoint_manager.load_checkpoint(model, optimizer, checkpoint_filename)
 
-    for epoch in range(num_epochs):
-        
-        print(f"\n-- Epoch {epoch} --\n")
-        
-        validate(model, val_loader, criterion, device)
+        scaler = GradScaler()
 
-        evaluate(tokenizer, model, epoch)
+        while writer_checkpoint_manager.epoch < num_epochs:
+            
+            print(f"\n-- Epoch {writer_checkpoint_manager.epoch} --\n")
+            
+            validate(model, val_loader, criterion, device, writer_checkpoint_manager)
 
-        train(train_loader, model, criterion, optimizer, scaler, epoch)
-        
-        save_checkpoint(epoch, model, optimizer)
+            evaluate(tokenizer, model, writer_checkpoint_manager)
 
+            train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_manager)
+            
+            writer_checkpoint_manager.save_checkpoint(model, optimizer)
+            
+            writer_checkpoint_manager.increment_epoch()
 
-    print("Training completed.")
 
 
 if __name__ == '__main__':
