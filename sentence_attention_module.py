@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 
 class SentenceAttentionModule(nn.Module):
-    def __init__(self, sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads):
+    def __init__(self, sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads, window_size):
         super(SentenceAttentionModule, self).__init__()
         self.multihead_attention = nn.MultiheadAttention(embed_dim=embedding_dimension, num_heads=num_heads, batch_first=True)
         self.sentence_breaking_token_ids = sentence_breaking_token_ids
         self.embedding_dimension = embedding_dimension
-        self.window_size = 16
+        self.window_size = window_size
 
     def forward(self, input_embeddings, token_ids):
         batch_size, seq_len, d_model = input_embeddings.shape
@@ -71,7 +71,7 @@ def test_optimized_sentence_aware_embedding_module():
     num_heads = 2
     sentence_breaking_token_ids = torch.tensor([42, 43])
     
-    model = SentenceAttentionModule(sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads)
+    model = SentenceAttentionModule(sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads, 8)
     
     token_ids = torch.tensor([
         [0, 1, 42, 3, 43],

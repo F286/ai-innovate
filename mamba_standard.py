@@ -32,10 +32,10 @@ batch_size = 128
 seq_length = 256
 d_model = 256
 feed_forward_expand_dim = d_model * 4
-num_layers = 28 # +4 w/ all tokens at start and end
+num_layers = 32
 num_heads = 2
 num_epochs = 10000
-checkpoint_directory = "compact_expand/"
+checkpoint_directory = "mamba_standard/"
 checkpoint_filename = "none"
 log_directory = checkpoint_directory
 checkpoint_save_every_epochs = 1
@@ -74,10 +74,10 @@ class TransformerLayer(nn.Module):
     
 
 class SentenceLocalLayer(nn.Module):
-    def __init__(self, embedding_dimension, sentence_breaking_token_ids, sequence_length, num_heads, window_size):
+    def __init__(self, sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads):
         super(SentenceLocalLayer, self).__init__()
 
-        self.layer = SentenceAttentionModule(sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads, window_size)
+        self.layer = SentenceAttentionModule(sentence_breaking_token_ids, sequence_length, embedding_dimension, num_heads)
 
     def forward(self, x, token_ids):
         output = self.layer(x, token_ids)
@@ -94,21 +94,21 @@ class TransformerModel(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
 
         # Attention layers
-        self.layers0 = nn.ModuleList([
-            SentenceLocalLayer(d_model, keep_token_ids, seq_length, num_heads, 8)
-            for _ in range(2)])
+        # self.layers0 = nn.ModuleList([
+        #     TransformerLayer(d_model)
+        #     for _ in range(2)])
         
         self.layers1 = nn.ModuleList([
             TransformerLayer(d_model)
             for _ in range(num_layers)])
         
-        self.layers2 = nn.ModuleList([
-            SentenceLocalLayer(d_model, keep_token_ids, seq_length, num_heads, 8)
-            for _ in range(2)])
+        # self.layers2 = nn.ModuleList([
+        #     TransformerLayer(d_model)
+        #     for _ in range(2)])
         
         # Compact expand
         compacted_max_sequence_length = 32
-        self.compact_expand = CompactExpandModule(keep_token_ids, sequence_length=seq_length, embedding_dimension=d_model, compacted_max_sequence_length=compacted_max_sequence_length)
+        # self.compact_expand = CompactExpandModule(keep_token_ids, sequence_length=seq_length, embedding_dimension=d_model, compacted_max_sequence_length=compacted_max_sequence_length)
         
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(
@@ -122,18 +122,18 @@ class TransformerModel(nn.Module):
         
         additional_loss = 0 
         
-        for idx, layer in enumerate(self.layers0):
-            x = layer(x, token_ids)
+        # for idx, layer in enumerate(self.layers0):
+        #     x = layer(x)
             
-        self.compact_expand(x, token_ids, is_compacting=True)
+        # self.compact_expand(x, token_ids, is_compacting=True)
 
         for idx, layer in enumerate(self.layers1):
             x = layer(x)
             
-        self.compact_expand(x, is_compacting=False)
+        # self.compact_expand(x, is_compacting=False)
             
-        for idx, layer in enumerate(self.layers2):
-            x = layer(x, token_ids)
+        # for idx, layer in enumerate(self.layers2):
+        #     x = layer(x)
 
         x = self.fc_layer(x)
 
