@@ -58,7 +58,7 @@ data = torch.randint(1, vocab_size, (num_sequences, max_length))
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-for epoch in range(10):  # Simple example, adjust epochs as needed
+for epoch in range(1000):  # Simple example, adjust epochs as needed
     for sequence in data:
         sequence = sequence.unsqueeze(0)  # Add batch dimension
         input_seq = sequence[:, :-1]  # All tokens except the last
