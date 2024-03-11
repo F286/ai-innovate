@@ -15,11 +15,6 @@ from tokenizers.models import BPE
 
 from torch.cuda.amp import autocast, GradScaler
 
-# try:
-#     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
-# except ImportError:
-#     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
-
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
 d_model = 256
