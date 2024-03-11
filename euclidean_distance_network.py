@@ -17,10 +17,10 @@ from torch.cuda.amp import autocast, GradScaler
 
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
-d_model = 256
-feed_forward_expand_dim = d_model * 4
-num_layers = 32
-num_heads = 8
+d_model = 64
+feed_forward_expand_dim = d_model * 2
+num_layers = 2
+num_heads = 2
 num_epochs = 10000
 checkpoint_path = ""
 vocab_size = 4096
