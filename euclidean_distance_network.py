@@ -89,34 +89,40 @@ class NetworkLayer(nn.Module):
         return x
 
     # possibly correct version that doesn't use a softmax
-    # def euclidean_attention(self, Q, K):
-    # # Compute squared Euclidean distance for adjusted position embeddings
-    # distances = torch.cdist(Q, K, p=2) + 1
-    # attention_scores = 1 / distances.pow(2)
-
-    # # Create a causal mask where future tokens are masked
-    # seq_len = Q.size(2)
-    # causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=Q.device), diagonal=1).bool()
-    
-    # # Apply causal mask by setting scores for future tokens to 0
-    # attention_scores.masked_fill_(causal_mask.unsqueeze(1).unsqueeze(0), 0)
-
-    # return attention_scores
-
-
     def euclidean_attention(self, Q, K):
-        # Assuming Q and K are in shape [batch_size, num_heads, seq_len, dim_per_head]
         distances = torch.cdist(Q, K, p=2) + 1
         attention_scores = 1 / distances.pow(2)
+
+        # Assuming Q and K have shape [batch_size, num_heads, seq_len, dim_per_head]
+        batch_size, num_heads, seq_len, _ = Q.size()
+
+        # Create a causal mask for seq_len, ensuring it's compatible with the attention scores
+        causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=Q.device), diagonal=1).bool()
+
+        # Expand the causal mask to match the attention_scores dimensions
+        # It should be expanded across batch_size and num_heads while keeping the seq_len dimensions
+        causal_mask_expanded = causal_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, num_heads, -1, -1)
+
+        # Apply causal mask
+        attention_scores.masked_fill_(causal_mask_expanded, 0)
+
+        return attention_scores
+
+
+
+    # def euclidean_attention(self, Q, K):
+    #     # Assuming Q and K are in shape [batch_size, num_heads, seq_len, dim_per_head]
+    #     distances = torch.cdist(Q, K, p=2) + 1
+    #     attention_scores = 1 / distances.pow(2)
         
-        # Apply causal mask to ensure attention is only applied to past tokens
-        seq_len = Q.size(2)
-        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(Q.device)
-        attention_scores = attention_scores.masked_fill(causal_mask == 1, float('-inf'))
+    #     # Apply causal mask to ensure attention is only applied to past tokens
+    #     seq_len = Q.size(2)
+    #     causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(Q.device)
+    #     attention_scores = attention_scores.masked_fill(causal_mask == 1, float('-inf'))
         
-        scaled_attention_scores = attention_scores * (self.dim_per_head ** -0.5)
-        attention = F.softmax(scaled_attention_scores, dim=-1)
-        return attention
+    #     scaled_attention_scores = attention_scores * (self.dim_per_head ** -0.5)
+    #     attention = F.softmax(scaled_attention_scores, dim=-1)
+    #     return attention
 
 
 class TransformerLayer(nn.Module):
