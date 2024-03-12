@@ -44,12 +44,19 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
         return pe
     
     def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
-        return x
+        # x is expected to have shape [batch_size, seq_length, d_model]
+        # Expand pe to match x's shape, considering batch as the 0th dimension
+        pe = self.pe[:x.size(1), :].unsqueeze(0)  # Adjust for seq_length and add batch dimension
+        # Repeat positional encoding for each item in the batch
+        pe = pe.repeat(x.size(0), 1, 1)  # Repeat along the batch dimension to match x's batch size
+        return pe
+    
+    def get_trimmed(self, batch_size):
+        return self.pe[:batch_size, :]
+
 
 class NetworkLayer(nn.Module):
     def __init__(self, d_model, num_heads, dim_feedforward, device, max_len=5000):
@@ -68,26 +75,39 @@ class NetworkLayer(nn.Module):
             nn.Linear(dim_feedforward, d_model)
         )
 
-        self.pos_encoder = PositionalEncoding(d_model, max_len, device)
-        self.pos_adjustment = nn.Parameter(torch.zeros(1, d_model))
-        nn.init.uniform_(self.pos_adjustment, -0.01, 0.01)  # Small range around zero
+        # Alternative feed-forward network for concatenated embeddings and positional encodings
+        self.alternative_ff = nn.Sequential(
+            nn.Linear(d_model * 2, dim_feedforward),  # Note the doubled input dimension
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model)
+        )
 
-    def forward(self, x):
-        batch_size = x.shape[1]
-        x = self.pos_encoder(x)
+    def forward(self, x, pos_embedding):
+        batch_size = x.shape[0]
         
-        # Apply position adjustments
-        pos_adjustments = self.pos_adjustment.expand(x.size(0), -1, -1)
-        x = x + pos_adjustments
+        # Get base positional encodings
+        base_pe = pos_embedding
         
-        # Calculate Q, K, V
-        Q = self.query(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
-        K = self.key(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
+        # Concatenate x and base_pe along the feature dimension
+        concatenated = torch.cat((x, base_pe), dim=-1)
+        
+        # Process the concatenated tensor with the alternative feed-forward network
+        ff_output = self.alternative_ff(concatenated)
+        
+        # Add the output of the feed-forward network back into the positional encodings
+        modified_pe = base_pe + ff_output
+        
+        # Use modified positional encodings for query and key in attention
+        Q = self.query(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
+        K = self.key(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
+        
+        # Use original embeddings for value in attention
         V = self.value(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
 
         # Scaled Dot-Product Attention with Positional Distance
         attention_scores = self.euclidean_attention(Q, K)
-        x = torch.matmul(attention_scores, V).transpose(1, 2).contiguous().view(-1, batch_size, self.d_model)
+        x = torch.matmul(attention_scores, V).transpose(1, 2).contiguous()
+        x = x.view(batch_size, -1, self.d_model)
 
         x = self.feed_forward(x)
         return x
@@ -113,31 +133,15 @@ class NetworkLayer(nn.Module):
         return attention_scores
 
 
-
-    # def euclidean_attention(self, Q, K):
-    #     # Assuming Q and K are in shape [batch_size, num_heads, seq_len, dim_per_head]
-    #     distances = torch.cdist(Q, K, p=2) + 1
-    #     attention_scores = 1 / distances.pow(2)
-        
-    #     # Apply causal mask to ensure attention is only applied to past tokens
-    #     seq_len = Q.size(2)
-    #     causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(Q.device)
-    #     attention_scores = attention_scores.masked_fill(causal_mask == 1, float('-inf'))
-        
-    #     scaled_attention_scores = attention_scores * (self.dim_per_head ** -0.5)
-    #     attention = F.softmax(scaled_attention_scores, dim=-1)
-    #     return attention
-
-
 class TransformerLayer(nn.Module):
     def __init__(self, d_model, num_heads, dim_feedforward):
         super(TransformerLayer, self).__init__()
 
         self.layer = NetworkLayer(d_model, num_heads, dim_feedforward, device)
 
-    def forward(self, x):
+    def forward(self, x, pos_embedding):
         # Apply Transformer block
-        output = self.layer(x)
+        output = self.layer(x, pos_embedding)
         # In the original Transformer, output and input are combined inside the Transformer block.
         return output
 
@@ -150,6 +154,8 @@ class TransformerModel(nn.Module):
 
         # Embeddings
         self.embedding = nn.Embedding(vocab_size, d_model)
+        
+        self.pos_encoder = PositionalEncoding(d_model, seq_length, device)
 
         # Transformer Layers
         self.layers = nn.ModuleList([
@@ -166,10 +172,12 @@ class TransformerModel(nn.Module):
     def forward(self, x):
         x = self.embedding(x)
 
+        pos_embedding = self.pos_encoder(x)
+
         additional_loss = 0
 
         for idx, layer in enumerate(self.layers):
-            x = layer(x)
+            x = layer(x, pos_embedding)
 
         x = self.fc_layer(x)
 
@@ -343,8 +351,9 @@ def train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_m
             avg_loss = total_loss / (i + 1)
             epoch_progress = (i + 1) / len(train_loader) * 100
 
-            writer_checkpoint_manager.add_scalar("Loss/train", avg_loss)
-            writer_checkpoint_manager.add_scalar("Tokens per second", tokens_per_second)
+            if writer_checkpoint_manager.global_step % 10 == 0:
+                writer_checkpoint_manager.add_scalar("Loss/train", avg_loss)
+                writer_checkpoint_manager.add_scalar("Tokens per second", tokens_per_second)
             
             writer_checkpoint_manager.increment_global_step()
 
