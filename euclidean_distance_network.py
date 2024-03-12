@@ -30,24 +30,25 @@ PAD_IDX = 1
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, d_model, max_len=5000, device=torch.device("cpu")):
         super(PositionalEncoding, self).__init__()
-        # Create a long enough `position_encoding`
+        self.pe = self.create_position_encoding(d_model, max_len).to(device)
+        
+    def create_position_encoding(self, d_model, max_len):
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
-        # Register `pe` as a constant buffer, so it's not considered a model parameter.
-        self.register_buffer('pe', pe)
-
+        return pe
+    
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return x
 
 class NetworkLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward):
+    def __init__(self, d_model, num_heads, dim_feedforward, device, max_len=5000):
         super(NetworkLayer, self).__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -57,37 +58,72 @@ class NetworkLayer(nn.Module):
         self.key = nn.Linear(d_model, d_model)
         self.value = nn.Linear(d_model, d_model)
 
-        # Position-wise feedforward network
         self.feed_forward = nn.Sequential(
             nn.Linear(d_model, dim_feedforward),
             nn.ReLU(),
             nn.Linear(dim_feedforward, d_model)
         )
 
-        self.pos_encoder = PositionalEncoding(d_model)
+        self.pos_encoder = PositionalEncoding(d_model, max_len, device)
+        self.pos_adjustment = nn.Parameter(torch.zeros(1, d_model))
+        nn.init.uniform_(self.pos_adjustment, -0.01, 0.01)  # Small range around zero
 
     def forward(self, x):
         batch_size = x.shape[1]
         x = self.pos_encoder(x)
-
+        
+        # Apply position adjustments
+        pos_adjustments = self.pos_adjustment.expand(x.size(0), -1, -1)
+        x = x + pos_adjustments
+        
         # Calculate Q, K, V
         Q = self.query(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
         K = self.key(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
         V = self.value(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
 
-        # Scaled Dot-Product Attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.dim_per_head)
-        attention = F.softmax(scores, dim=-1)
-        x = torch.matmul(attention, V).transpose(1, 2).contiguous().view(-1, batch_size, self.d_model)
+        # Scaled Dot-Product Attention with Positional Distance
+        attention_scores = self.euclidean_attention(Q, K)
+        x = torch.matmul(attention_scores, V).transpose(1, 2).contiguous().view(-1, batch_size, self.d_model)
 
         x = self.feed_forward(x)
         return x
+
+    # possibly correct version that doesn't use a softmax
+    # def euclidean_attention(self, Q, K):
+    # # Compute squared Euclidean distance for adjusted position embeddings
+    # distances = torch.cdist(Q, K, p=2) + 1
+    # attention_scores = 1 / distances.pow(2)
+
+    # # Create a causal mask where future tokens are masked
+    # seq_len = Q.size(2)
+    # causal_mask = torch.triu(torch.ones((seq_len, seq_len), device=Q.device), diagonal=1).bool()
+    
+    # # Apply causal mask by setting scores for future tokens to 0
+    # attention_scores.masked_fill_(causal_mask.unsqueeze(1).unsqueeze(0), 0)
+
+    # return attention_scores
+
+
+    def euclidean_attention(self, Q, K):
+        # Assuming Q and K are in shape [batch_size, num_heads, seq_len, dim_per_head]
+        distances = torch.cdist(Q, K, p=2) + 1
+        attention_scores = 1 / distances.pow(2)
+        
+        # Apply causal mask to ensure attention is only applied to past tokens
+        seq_len = Q.size(2)
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(Q.device)
+        attention_scores = attention_scores.masked_fill(causal_mask == 1, float('-inf'))
+        
+        scaled_attention_scores = attention_scores * (self.dim_per_head ** -0.5)
+        attention = F.softmax(scaled_attention_scores, dim=-1)
+        return attention
+
 
 class TransformerLayer(nn.Module):
     def __init__(self, d_model, num_heads, dim_feedforward):
         super(TransformerLayer, self).__init__()
 
-        self.layer = NetworkLayer(d_model, num_heads, dim_feedforward)
+        self.layer = NetworkLayer(d_model, num_heads, dim_feedforward, device)
 
     def forward(self, x):
         # Apply Transformer block
