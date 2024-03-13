@@ -139,7 +139,7 @@ class NetworkLayer(nn.Module):
     # possibly correct version that doesn't use a softmax
     def euclidean_attention(self, Q, K):
         distances = torch.cdist(Q, K, p=2) + 1
-        attention_scores = 1 / distances.pow(2)
+        attention_scores = 1 / distances
 
         # Assuming Q and K have shape [batch_size, num_heads, seq_len, dim_per_head]
         batch_size, num_heads, seq_len, _ = Q.size()
