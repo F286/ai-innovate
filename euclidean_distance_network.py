@@ -23,7 +23,7 @@ feed_forward_expand_dim = d_model * 2
 num_layers = 2
 num_heads = 2
 num_epochs = 10000
-checkpoint_directory = "euclidean_distance/"
+checkpoint_directory = "euclidean_distance_pos_dim_4_linear/"
 checkpoint_filename = "none"
 log_directory = checkpoint_directory
 checkpoint_save_every_epochs = 1
@@ -59,14 +59,20 @@ class PositionalEncoding(nn.Module):
 
 
 class NetworkLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward, device, max_len=5000):
+    def __init__(self, d_model, d_pos_embedding, num_heads, dim_feedforward, device, max_len=5000):
         super(NetworkLayer, self).__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.dim_per_head = d_model // num_heads
+        self.dim_per_pos_embedding_head = d_pos_embedding // num_heads
 
-        self.query = nn.Linear(d_model, d_model)
-        self.key = nn.Linear(d_model, d_model)
+        self.query = nn.Linear(d_pos_embedding, d_pos_embedding)
+        self.key = nn.Linear(d_pos_embedding, d_pos_embedding)
+
+        # Initialize query and key as identity matrices
+        self._init_as_identity(self.query)
+        self._init_as_identity(self.key)
+            
         self.value = nn.Linear(d_model, d_model)
 
         self.feed_forward = nn.Sequential(
@@ -77,10 +83,28 @@ class NetworkLayer(nn.Module):
 
         # Alternative feed-forward network for concatenated embeddings and positional encodings
         self.alternative_ff = nn.Sequential(
-            nn.Linear(d_model * 2, dim_feedforward),  # Note the doubled input dimension
+            nn.Linear(d_model + d_pos_embedding, dim_feedforward),  # Note the doubled input dimension
             nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
+            nn.Linear(dim_feedforward, d_pos_embedding)
         )
+        
+        # Initialize weights to very small random values
+        for layer in self.alternative_ff:
+            if isinstance(layer, nn.Linear):
+                # Using normal distribution with a small standard deviation
+                nn.init.normal_(layer.weight, mean=0.0, std=0.01)
+                
+                # Initialize biases to zero (optional, as it's common practice)
+                nn.init.zeros_(layer.bias)
+
+    def _init_as_identity(self, layer):
+        if layer.in_features == layer.out_features:
+            # Set weights to identity matrix
+            nn.init.eye_(layer.weight)
+            # Set biases to zero
+            nn.init.zeros_(layer.bias)
+        else:
+            raise ValueError("Identity initialization failed: in_features and out_features must be equal.")
 
     def forward(self, x, pos_embedding):
         batch_size = x.shape[0]
@@ -98,8 +122,8 @@ class NetworkLayer(nn.Module):
         modified_pe = base_pe + ff_output
         
         # Use modified positional encodings for query and key in attention
-        Q = self.query(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
-        K = self.key(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
+        Q = self.query(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
+        K = self.key(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
         
         # Use original embeddings for value in attention
         V = self.value(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
@@ -134,10 +158,10 @@ class NetworkLayer(nn.Module):
 
 
 class TransformerLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward):
+    def __init__(self, d_model, d_pos_embedding, num_heads, dim_feedforward):
         super(TransformerLayer, self).__init__()
 
-        self.layer = NetworkLayer(d_model, num_heads, dim_feedforward, device)
+        self.layer = NetworkLayer(d_model, d_pos_embedding, num_heads, dim_feedforward, device)
 
     def forward(self, x, pos_embedding):
         # Apply Transformer block
@@ -155,11 +179,12 @@ class TransformerModel(nn.Module):
         # Embeddings
         self.embedding = nn.Embedding(vocab_size, d_model)
         
-        self.pos_encoder = PositionalEncoding(d_model, seq_length, device)
+        d_pos_embedding = 4 * num_heads
+        self.pos_encoder = PositionalEncoding(d_pos_embedding, seq_length, device)
 
         # Transformer Layers
         self.layers = nn.ModuleList([
-            TransformerLayer(d_model, num_heads, dim_feedforward)
+            TransformerLayer(d_model, d_pos_embedding, num_heads, dim_feedforward)
             for _ in range(num_layers)])
 
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
@@ -353,7 +378,7 @@ def train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_m
 
             if writer_checkpoint_manager.global_step % 10 == 0:
                 writer_checkpoint_manager.add_scalar("Loss/train", avg_loss)
-                writer_checkpoint_manager.add_scalar("Tokens per second", tokens_per_second)
+                writer_checkpoint_manager.add_scalar("Tokens per second (k)", tokens_per_second / 1000)
             
             writer_checkpoint_manager.increment_global_step()
 
