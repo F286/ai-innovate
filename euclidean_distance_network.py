@@ -18,12 +18,12 @@ from torch.cuda.amp import autocast, GradScaler
 
 batch_size = 128
 seq_length = 256  # The length to pad or truncate to
-d_model = 64
-feed_forward_expand_dim = d_model * 2
-num_layers = 2
-num_heads = 2
+d_model = 128
+feed_forward_expand_dim = d_model * 4
+num_layers = 4
+num_heads = 4
 num_epochs = 10000
-checkpoint_directory = "euclidean_distance_pos_dim_4_linear/"
+checkpoint_directory = "euclidean_distance_pos_sin/"
 checkpoint_filename = "none"
 log_directory = checkpoint_directory
 checkpoint_save_every_epochs = 1
@@ -36,15 +36,25 @@ PAD_IDX = 1
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000, device=torch.device("cpu")):
         super(PositionalEncoding, self).__init__()
-        self.pe = self.create_position_encoding(d_model, max_len).to(device)
+        self.pe = self.init_base_position_embeddings(max_len, d_model).to(device)
         
-    def create_position_encoding(self, d_model, max_len):
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        return pe
+    def init_base_position_embeddings(self, max_length, pos_embedding_dim):
+        # Ensure the pos_embedding_dim is even to split between sin and cos evenly
+        if pos_embedding_dim % 2 != 0:
+            raise ValueError("pos_embedding_dim must be even.")
+        
+        half_dim = pos_embedding_dim // 2
+        # Generate positions tensor
+        positions = torch.arange(0., max_length).unsqueeze(1)
+        # Calculate sin and cos positions using PyTorch's pi constant
+        sin_positions = torch.sin(0.5 * torch.pi * positions / max_length)
+        cos_positions = torch.cos(0.5 * torch.pi * positions / max_length)
+        # Repeat sin and cos to fill the embedding dimension
+        sin_embed = sin_positions.repeat(1, half_dim)
+        cos_embed = cos_positions.repeat(1, half_dim)
+        # Concatenate sin and cos embeddings
+        pos_embeddings = torch.cat((sin_embed, cos_embed), dim=1)
+        return pos_embeddings
     
     def forward(self, x):
         # x is expected to have shape [batch_size, seq_length, d_model]
@@ -85,7 +95,8 @@ class NetworkLayer(nn.Module):
         self.alternative_ff = nn.Sequential(
             nn.Linear(d_model + d_pos_embedding, dim_feedforward),  # Note the doubled input dimension
             nn.ReLU(),
-            nn.Linear(dim_feedforward, d_pos_embedding)
+            nn.Linear(dim_feedforward, d_pos_embedding),
+            nn.Sigmoid()
         )
         
         # Initialize weights to very small random values
@@ -122,8 +133,10 @@ class NetworkLayer(nn.Module):
         modified_pe = base_pe + ff_output
         
         # Use modified positional encodings for query and key in attention
+        # Q = self.query(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
+        # K = self.key(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
         Q = self.query(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
-        K = self.key(modified_pe).view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
+        K = modified_pe.view(-1, batch_size, self.num_heads, self.dim_per_pos_embedding_head).transpose(1, 2)
         
         # Use original embeddings for value in attention
         V = self.value(x).view(-1, batch_size, self.num_heads, self.dim_per_head).transpose(1, 2)
@@ -179,7 +192,7 @@ class TransformerModel(nn.Module):
         # Embeddings
         self.embedding = nn.Embedding(vocab_size, d_model)
         
-        d_pos_embedding = 4 * num_heads
+        d_pos_embedding = 32 * num_heads
         self.pos_encoder = PositionalEncoding(d_pos_embedding, seq_length, device)
 
         # Transformer Layers
