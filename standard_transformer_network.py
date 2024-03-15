@@ -25,7 +25,7 @@ class Config:
         self.num_layers = 2
         self.n_head = 2
         self.num_epochs = 10000
-        self.checkpoint_directory = "softmax_auto_encoder/"
+        self.checkpoint_directory = "standard_transformer/"
         self.checkpoint_filename = "none"
         self.log_directory = self.checkpoint_directory
         self.checkpoint_save_every_epochs = 1

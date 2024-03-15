@@ -35,11 +35,14 @@ class Config:
         self.block_size = self.seq_length  # For causal mask in self-attention
 
 
-config = Config()
+config: Config = Config()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
 
+class ForwardConfig:
+    def __init__(self):
+        self.additional_loss = 0
 
 class NewGELU(nn.Module):
     """
@@ -72,7 +75,7 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embed
 
-    def forward(self, x):
+    def forward(self, x, forward_config:ForwardConfig):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embed)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -99,9 +102,9 @@ class Block(nn.Module):
 
         self.layer = CausalSelfAttention(config)
 
-    def forward(self, x):
+    def forward(self, x, forward_config:ForwardConfig):
         # Apply Transformer block
-        output = self.layer(x)
+        output = self.layer(x, forward_config)
         # In the original Transformer, output and input are combined inside the Transformer block.
         return output
 
@@ -127,17 +130,15 @@ class TransformerModel(nn.Module):
             nn.Linear(config.feed_forward_expand_dim, config.vocab_size)  # Adjusted to use feed_forward_expand_dim
         )
 
-    def forward(self, x):
+    def forward(self, x, forward_config:ForwardConfig):
         x = self.embedding(x)
 
-        additional_loss = 0
-
         for idx, layer in enumerate(self.layers):
-            x = layer(x)
+            x = layer(x, forward_config)
 
         x = self.fc_layer(x)
 
-        return x, additional_loss
+        return x
 
 
 
@@ -217,7 +218,9 @@ def evaluate(tokenizer, model, writer_checkpoint_manager:TensorBoardCheckpointWr
         input_text = torch.tensor([seed_tokens]).long().to(device)
 
         for _ in range(220):
-            predictions, additional_loss = model(input_text)
+            forward_config = ForwardConfig()
+            
+            predictions = model(input_text, forward_config)
             next_token_idx = predictions[:, -1, :].argmax(dim=-1)
             input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
 
@@ -239,7 +242,9 @@ def validate(model, val_loader, criterion, device, writer_checkpoint_manager:Ten
             text = text.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
 
-            predictions, _ = model(text)
+            forward_config = ForwardConfig()
+
+            predictions = model(text, forward_config)
             predictions = predictions.view(-1, predictions.size(2))
             target = target.view(-1)
 
@@ -273,11 +278,13 @@ def train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_m
             # Increment the token counter
             tokens_processed += config.batch_size * config.seq_length
 
+            forward_config = ForwardConfig()
+
             # Run the model
-            prediction, additional_loss = model(text)
+            prediction = model(text, forward_config)
             
             # Prediction
-            loss = additional_loss
+            loss = forward_config.additional_loss
             
             assert prediction.shape[0] == text.shape[
                     0], f"Predictions batch size mismatch: predictions {prediction.shape}, text {text.shape}"
@@ -396,8 +403,6 @@ def load_or_create_tokenizer_and_vocab(train_dataset):
 def main():
     print("Using device:", device)
     
-    config: Config = Config()
-
     # Load the TinyStories dataset
     dataset = load_dataset("roneneldan/TinyStories")
     train_dataset = dataset['train']
@@ -412,7 +417,6 @@ def main():
     # Use this function to tokenize the dataset
     train_dataset = train_dataset.map(tokenize_func, cache_file_name="tokenized_train")
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
-
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
     
     val_loader = DataLoader(validation_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
@@ -420,9 +424,6 @@ def main():
     # Model definition
     assert(config.vocab_size == tokenizer.get_vocab_size())
     
-    # Common end-of-sentence specifiers
-    eos_tokens = ['.', '!', '?']
-
     model = TransformerModel(config).to(device)
 
     # Loss and optimizer
