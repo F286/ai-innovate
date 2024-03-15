@@ -16,45 +16,88 @@ from tokenizers.models import BPE
 
 from torch.cuda.amp import autocast, GradScaler
 
-batch_size = 128
-seq_length = 256  # The length to pad or truncate to
-d_model = 128
-feed_forward_expand_dim = d_model * 4
-num_layers = 4
-num_heads = 4
-num_epochs = 10000
-checkpoint_directory = "transformer_standard/"
-checkpoint_filename = "none"
-log_directory = checkpoint_directory
-checkpoint_save_every_epochs = 1
-vocab_size = 4096
+class Config:
+    def __init__(self):
+        self.batch_size = 128
+        self.seq_length = 256  # The length to pad or truncate to
+        self.n_embed = 64
+        self.feed_forward_expand_dim = self.n_embed * 2
+        self.num_layers = 2
+        self.n_head = 2
+        self.num_epochs = 10000
+        self.checkpoint_directory = "softmax_auto_encoder/"
+        self.checkpoint_filename = "none"
+        self.log_directory = self.checkpoint_directory
+        self.checkpoint_save_every_epochs = 1
+        self.vocab_size = 4096
+        self.attn_pdrop = 0.1  # Attention dropout
+        self.resid_pdrop = 0.1  # Residual dropout
+        self.block_size = self.seq_length  # For causal mask in self-attention
+
+
+config = Config()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PAD_IDX = 1
 
 
-class NetworkLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward):
-        super(NetworkLayer, self).__init__()
+class NewGELU(nn.Module):
+    """
+    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
+    Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
+    """
+    def forward(self, x):
+        return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
-        # Using PyTorch's TransformerEncoderLayer
-        self.transformer_block = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=num_heads,
-            dim_feedforward=dim_feedforward
-        )
+class CausalSelfAttention(nn.Module):
+    """
+    A vanilla multi-head masked self-attention layer with a projection at the end.
+    It is possible to use torch.nn.MultiheadAttention here but I am including an
+    explicit implementation here to show that there is nothing too scary here.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embed % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embed, 3 * config.n_embed)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embed, config.n_embed)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.attn_pdrop)
+        self.resid_dropout = nn.Dropout(config.resid_pdrop)
+        # causal mask to ensure that attention is only applied to the left in the input sequence
+        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                                     .view(1, 1, config.block_size, config.block_size))
+        self.n_head = config.n_head
+        self.n_embd = config.n_embed
 
     def forward(self, x):
-        # x: [sequence length, batch size, d_model]
-        x = self.transformer_block(x)
-        # No residual is explicitly returned as it's internally managed in the Transformer layer.
-        return x
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embed)
 
-class TransformerLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward):
-        super(TransformerLayer, self).__init__()
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        self.layer = NetworkLayer(d_model, num_heads, dim_feedforward)
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class Block(nn.Module):
+    def __init__(self, config:Config):
+        super(Block, self).__init__()
+
+        self.layer = CausalSelfAttention(config)
 
     def forward(self, x):
         # Apply Transformer block
@@ -64,24 +107,24 @@ class TransformerLayer(nn.Module):
 
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, num_heads, num_layers, dim_feedforward):
+    def __init__(self, config: Config):
         super(TransformerModel, self).__init__()
 
-        self.d_model = d_model
+        self.d_model = config.n_embed  # Adjusted to use n_embed
 
         # Embeddings
-        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.embedding = nn.Embedding(config.vocab_size, self.d_model)
 
         # Transformer Layers
         self.layers = nn.ModuleList([
-            TransformerLayer(d_model, num_heads, dim_feedforward)
-            for _ in range(num_layers)])
+            Block(config)
+            for _ in range(config.num_layers)])
 
         # Define a sequential layer for expansion, ReLU, and expansion to vocab_size
         self.fc_layer = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
+            nn.Linear(self.d_model, config.feed_forward_expand_dim),  # Adjusted to use feed_forward_expand_dim
             nn.ReLU(),
-            nn.Linear(dim_feedforward, vocab_size)
+            nn.Linear(config.feed_forward_expand_dim, config.vocab_size)  # Adjusted to use feed_forward_expand_dim
         )
 
     def forward(self, x):
@@ -228,7 +271,7 @@ def train(train_loader, model, criterion, optimizer, scaler, writer_checkpoint_m
             assert text.shape[0] == target.shape[0], f"Batch size mismatch: text {text.shape}, target {target.shape}"
 
             # Increment the token counter
-            tokens_processed += batch_size * seq_length
+            tokens_processed += config.batch_size * config.seq_length
 
             # Run the model
             prediction, additional_loss = model(text)
@@ -286,7 +329,7 @@ def create_tokenizer_function(tokenizer):
 
 
 def collate_batch(batch):
-    new_seq_length = seq_length 
+    new_seq_length = config.seq_length
 
     # Filter out short sequences
     valid_items = [item['input_ids'] for item in batch if len(item['input_ids']) >= 16]
@@ -339,7 +382,7 @@ def load_or_create_tokenizer_and_vocab(train_dataset):
                 f.write(text + "\n")
 
         # Train the tokenizer
-        trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<unk>", "<pad>", "<bos>", "<eos>"])
+        trainer = trainers.BpeTrainer(vocab_size=config.vocab_size, special_tokens=["<unk>", "<pad>", "<bos>", "<eos>"])
         tokenizer.train(files=["train_text.txt"], trainer=trainer)
 
         # Save tokenizer to files
@@ -352,6 +395,8 @@ def load_or_create_tokenizer_and_vocab(train_dataset):
 
 def main():
     print("Using device:", device)
+    
+    config: Config = Config()
 
     # Load the TinyStories dataset
     dataset = load_dataset("roneneldan/TinyStories")
@@ -368,16 +413,17 @@ def main():
     train_dataset = train_dataset.map(tokenize_func, cache_file_name="tokenized_train")
     validation_dataset = validation_dataset.map(tokenize_func, cache_file_name="tokenized_train")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
-    val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
+    
+    val_loader = DataLoader(validation_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=collate_batch, num_workers=16, pin_memory=True, prefetch_factor=8, drop_last=True)
 
     # Model definition
-    assert(vocab_size == tokenizer.get_vocab_size())
+    assert(config.vocab_size == tokenizer.get_vocab_size())
     
     # Common end-of-sentence specifiers
     eos_tokens = ['.', '!', '?']
 
-    model = TransformerModel(num_layers=num_layers, num_heads=num_heads, vocab_size=vocab_size, d_model=d_model, dim_feedforward=feed_forward_expand_dim).to(device)
+    model = TransformerModel(config).to(device)
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
@@ -385,15 +431,15 @@ def main():
 
     print_parameter_count(model)
 
-    with TensorBoardCheckpointWriter(log_dir=log_directory, checkpoint_dir=checkpoint_directory) as writer_checkpoint_manager:
+    with TensorBoardCheckpointWriter(log_dir=config.log_directory, checkpoint_dir=config.checkpoint_directory) as writer_checkpoint_manager:
         # Your training/validation loop and any checkpoint saving/loading logic
         # Use writer_checkpoint_manager for logging and checkpointing
 
-        writer_checkpoint_manager.load_checkpoint(model, optimizer, checkpoint_filename)
+        writer_checkpoint_manager.load_checkpoint(model, optimizer, config.checkpoint_filename)
 
         scaler = GradScaler()
 
-        while writer_checkpoint_manager.epoch < num_epochs:
+        while writer_checkpoint_manager.epoch < config.num_epochs:
             
             print(f"\n-- Epoch {writer_checkpoint_manager.epoch} --\n")
             
@@ -411,4 +457,6 @@ def main():
 
 if __name__ == '__main__':
     freeze_support() # Optional, only if you plan to create an executable
+    
+    # Do not change this line
     main()
