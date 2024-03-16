@@ -75,6 +75,30 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embed
 
+
+        self.custom_pathway = nn.Sequential(
+            # First convolutional layer
+            nn.Conv1d(
+                in_channels=config.num_heads,  # Input channels
+                out_channels=config.n_embed,  # Arbitrary choice, can be adjusted
+                kernel_size=32,
+                padding=16,  # Padding can be adjusted based on your requirements
+                groups=config.num_heads  # Using groups=num_heads if you wish to apply a separate convolution for each head
+            ),
+            nn.ReLU(),  # Non-linear activation function
+            # Second convolutional layer
+            nn.Conv1d(
+                in_channels=config.n_embed,  # Must match the out_channels of the previous layer
+                out_channels=config.n_embed,  # This can be the same as above or different, depending on your design
+                kernel_size=32,
+                padding=16,  # Adjust padding as necessary
+                groups=config.num_heads  # Maintaining separate convolutions per head
+            ),
+            nn.ReLU()  # Another non-linearity
+        )
+# Then, inside forward
+
+
     def forward(self, x, forward_config:ForwardConfig):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embed)
 
@@ -89,7 +113,42 @@ class CausalSelfAttention(nn.Module):
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+
+        # Custom softmax
+        softmax_att = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+
+        # Inside forward, replace the custom_att line with:
+        
+        # Assuming att has shape: [batch_size, num_heads, seq_length, seq_length]
+        batch_size, num_heads, seq_length, _ = att.size()
+
+        # Reshape for Conv1d to treat each head as a separate channel and each sequence position as a separate sample.
+        # Merge batch and sequence length dimensions, treat num_heads as channels.
+        att_reshaped = att.transpose(2, 3).reshape(batch_size * seq_length, num_heads, seq_length)
+
+        # Define your convolutional layers to expect `num_heads` as in_channels.
+        # Assuming self.custom_pathway is an nn.Sequential containing Conv1d layers configured with in_channels=num_heads.
+        custom_att = self.custom_pathway(att_reshaped)
+
+        # Assuming you want to reshape custom_att back to its original form or another desired shape,
+        # you should adjust the reshape operation accordingly.
+
+
+
+        custom_att = F.softmax(custom_att, dim=-1)  # Then apply softmax
+        custom_att = self.attn_dropout(custom_att)  # Apply dropout
+
+        # Compute additional loss (no changes here, just for context)
+        forward_config.additional_loss += F.mse_loss(custom_att, softmax_att.detach())
+
+        # Modify the output to use the custom pathway
+        y = custom_att @ v  # Changed from softmax_att to custom_att
+
+
+
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
@@ -219,7 +278,7 @@ def evaluate(tokenizer, model, writer_checkpoint_manager:TensorBoardCheckpointWr
 
         for _ in range(220):
             forward_config = ForwardConfig()
-            
+
             predictions = model(input_text, forward_config)
             next_token_idx = predictions[:, -1, :].argmax(dim=-1)
             input_text = torch.cat([input_text, next_token_idx.unsqueeze(0)], dim=1)
