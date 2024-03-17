@@ -36,11 +36,11 @@ def evaluate_and_visualize(model: SDFNet, input_path: str) -> None:
 
     # Load the input data
     sdf_object = SDFObject.load(input_path)
-    edge_voxels_input = sdf_object.get_edge_voxels().to(device)
+    edge_voxels_input = sdf_object.get_edge_voxels_tensor().to(device)
 
     # Perform prediction
     with torch.no_grad():
-        edge_voxels_input = torch.tensor(edge_voxels_input).float().unsqueeze(0)  # Add batch dimension
+        # edge_voxels_input = torch.tensor(edge_voxels_input).float().unsqueeze(0)  # Add batch dimension
         predicted_sdf_array = model(edge_voxels_input).squeeze(0).cpu().numpy()  # Remove batch dimension
 
     # Convert the predicted numpy array back to an SDFObject for visualization
