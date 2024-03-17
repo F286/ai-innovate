@@ -8,11 +8,11 @@ import os
 np.random.seed(42)  # Set seed for consistent randomness
 
 
-def generate_variations_and_save(sdf_folder='sdf_variations'):
+def generate_variations_and_save(sdf_folder='sdf/sdf_variations'):
     os.makedirs(sdf_folder, exist_ok=True)  # Create the sub-folder if it doesn't exist
     shape_gen = ShapeGenerator(grid_size=(100, 100))
 
-    for i in range(32):
+    for i in range(1024):
         num_boxes = np.random.randint(1, 4)  # Randomly decide to generate 1 to 3 boxes
         combined_dense_grid = np.zeros(shape_gen.grid_size, dtype=np.int8)
 
@@ -28,7 +28,7 @@ def generate_variations_and_save(sdf_folder='sdf_variations'):
         save_sdf(filepath, sdf_object)
 
 
-def visualize_random_variation(sdf_folder='sdf_variations'):
+def visualize_random_variation(sdf_folder='sdf/sdf_variations'):
     variation_number = np.random.randint(0, 32)
     filepath = os.path.join(sdf_folder, f'sdf_variation_{{:04d}}.npy'.format(variation_number))
     sdf_object = load_sdf(filepath)
@@ -37,6 +37,6 @@ def visualize_random_variation(sdf_folder='sdf_variations'):
 
 
 if __name__ == "__main__":
-    sdf_folder = 'sdf_variations'
+    sdf_folder = 'sdf/sdf_variations'
     generate_variations_and_save(sdf_folder=sdf_folder)
     visualize_random_variation(sdf_folder=sdf_folder)
