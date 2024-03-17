@@ -9,7 +9,7 @@ import os
 def train_model(train_dir):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.0000000001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0000000000001)
     criterion = nn.MSELoss()
 
     # Assuming the training data is in 'train_dir'

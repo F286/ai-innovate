@@ -22,7 +22,8 @@ class SDFObject:
         # Assuming 'edge' voxels are those with a value of 0
         # np.expand_dims adds an axis, making the array compatible for operations that expect an additional dimension.
         # (self.sdf_data == 0).astype(np.float32) creates a binary mask of the edge voxels, converting True/False to 1.0/0.0.
-        edge_voxels = np.expand_dims((self.sdf_data == 0).astype(np.float32), axis=0)
+        edge_voxels = np.expand_dims((self.sdf_data < 0.1).astype(np.float32), axis=0)
+
         # Instead of returning a tensor, we return a new SDFObject containing the edge voxels.
         return SDFObject(edge_voxels)
 
@@ -35,8 +36,13 @@ class SDFObject:
         """
         # Call the original get_edge_voxels method to get the SDFObject with edge voxels
         edge_voxels_sdf = self.get_edge_voxels()
+
         # Convert the numpy array inside the SDFObject to a PyTorch tensor
         edge_voxels_tensor = torch.from_numpy(edge_voxels_sdf.sdf_data)
+
+        # Print the shape of the tensor to understand its structure.
+        print(f"Shape of edge_voxels_tensor: {edge_voxels_tensor.shape}")
+
         return edge_voxels_tensor
 
     def get_target(self) -> 'SDFObject':
