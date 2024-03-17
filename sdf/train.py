@@ -6,10 +6,10 @@ from sdf_model import SDFNet
 from data_processor import SDFDataset
 import os
 
-def train_model(train_dir):
+def train_model(train_dir: str) -> SDFNet:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.0000000000001)
+    optimizer = optim.Adam(model.parameters(), lr=0.000001)
     criterion = nn.MSELoss()
 
     # Assuming the training data is in 'train_dir'
@@ -18,7 +18,7 @@ def train_model(train_dir):
     train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
 
     model.train()
-    for epoch in range(1000):  # Example: 10 epochs
+    for epoch in range(10):  # Example: 10 epochs
         for edge_voxels, target in train_loader:
             edge_voxels, target = edge_voxels.to(device), target.to(device)
             optimizer.zero_grad()
@@ -27,3 +27,5 @@ def train_model(train_dir):
             loss.backward()
             optimizer.step()
         print(f"Epoch {epoch}, Loss: {loss.item()}")
+
+    return model  # Return the trained model

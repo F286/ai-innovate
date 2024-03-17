@@ -1,9 +1,8 @@
-
 import torch
 from sdf_model import SDFNet
 import numpy as np
 
-def predict(model_path, edge_voxels):
+def predict(model_path: str, edge_voxels: np.ndarray) -> np.ndarray:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
     model.load_state_dict(torch.load(model_path))

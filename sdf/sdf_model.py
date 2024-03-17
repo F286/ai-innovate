@@ -16,7 +16,7 @@ class SDFNet(nn.Module):
 
         x = self.relu(self.conv0(x))
 
-        for _ in range(1):  # Sequential convolutions with the same weights
+        for _ in range(16):  # Sequential convolutions with the same weights
             x = self.relu(self.conv1(x))
 
         x = self.relu(self.conv2(x))
