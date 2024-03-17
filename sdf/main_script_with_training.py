@@ -61,7 +61,7 @@ if __name__ == "__main__":
     trained_model = train_model(train_dir)
     
     # Path to the sample input for evaluation
-    input_path = 'sdf/sdf_evaluate/sample_input.sdf'
+    input_path = 'sdf/sdf_evaluate/sample_input.npy'
 
     # Evaluate the model and visualize the results using the trained model directly
     evaluate_and_visualize(trained_model, input_path)
