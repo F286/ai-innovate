@@ -1,5 +1,5 @@
 import torch
-from sdf_model import SDFNet
+from .sdf_model import SDFNet
 import numpy as np
 
 def predict(model_path: str, edge_voxels: np.ndarray) -> np.ndarray:

@@ -39,9 +39,8 @@ class SDFObject:
 
         # Convert the numpy array inside the SDFObject to a PyTorch tensor
         edge_voxels_tensor = torch.from_numpy(edge_voxels_sdf.sdf_data)
-
-        # Print the shape of the tensor to understand its structure.
-        print(f"Shape of edge_voxels_tensor: {edge_voxels_tensor.shape}")
+        
+        # edge_voxels_tensor = edge_voxels_tensor.unsqueeze(0)
 
         return edge_voxels_tensor
 
@@ -71,4 +70,5 @@ class SDFObject:
         target_sdf = self.get_target()
         # Convert the numpy array inside the SDFObject to a PyTorch tensor
         target_tensor = torch.from_numpy(target_sdf.sdf_data)
+        target_tensor = target_tensor.unsqueeze(0)
         return target_tensor

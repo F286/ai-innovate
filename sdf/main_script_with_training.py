@@ -1,20 +1,20 @@
 
-from data_processor import SDFDataset
+from .sdf_dataset import SDFDataset
 from torch.utils.data import DataLoader
 import torch
 import os
 import sys
 
-from sdf_model import SDFNet
-from train import train_model
+from .sdf_model import SDFNet
+from .train import train_model
 # from predict import predict  # Uncomment if prediction functionality is needed
 
-from visualization import visualize_comparison
-from sdf_object import SDFObject
+from .visualization import visualize_comparison
+from .sdf_object import SDFObject
 
 def visualize_first_entry(train_dir):
     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
-    first_file = train_files[0]
+    first_file = train_files[5]
     sdf_object = SDFObject.load(first_file)
     edge_voxels_sdf = sdf_object.get_edge_voxels()
     target_sdf = sdf_object.get_target()
@@ -48,7 +48,6 @@ def evaluate_and_visualize(model: SDFNet, input_path: str) -> None:
 
     # Visualize the original and predicted SDF
     visualize_comparison(sdf_object, predicted_sdf_object)
-
 
 if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data

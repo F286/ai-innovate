@@ -1,5 +1,5 @@
 import numpy as np
-from sdf_object import SDFObject
+from .sdf_object import SDFObject
 
 def save_sdf(filename, sdf_object):
     np.save(filename, sdf_object.sdf_data)

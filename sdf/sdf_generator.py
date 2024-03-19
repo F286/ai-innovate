@@ -1,6 +1,6 @@
 from scipy.ndimage import distance_transform_edt
 import numpy as np
-from sdf_object import SDFObject
+from .sdf_object import SDFObject
 
 class SDFGenerator:
     @staticmethod

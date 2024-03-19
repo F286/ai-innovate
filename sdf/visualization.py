@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from sdf_object import SDFObject
+from .sdf_object import SDFObject
 import numpy as np
 
 def visualize_sdf(sdf_object: SDFObject):

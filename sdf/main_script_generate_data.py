@@ -1,8 +1,8 @@
 import numpy as np
-from shape_generator import ShapeGenerator
-from sdf_generator import SDFGenerator
-from save_load import save_sdf, load_sdf
-from visualization import visualize_sdf
+from .shape_generator import ShapeGenerator
+from .sdf_generator import SDFGenerator
+from .save_load import save_sdf, load_sdf
+from .visualization import visualize_sdf
 import os
 
 np.random.seed(42)  # Set seed for consistent randomness
