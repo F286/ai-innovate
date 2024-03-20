@@ -2,38 +2,32 @@ import matplotlib.pyplot as plt
 from .sdf_object import SDFObject
 import numpy as np
 
-def visualize_sdf(sdf_object: SDFObject):
-    """Visualizes the Signed Distance Field (SDF) contained within an SDFObject."""
-    plt.imshow(sdf_object.sdf_data, cmap='RdBu')
-    plt.colorbar()
-    plt.title('Signed Distance Field Visualization')
-    plt.show()
-
-def visualize_comparison(original_sdf: 'SDFObject', predicted_sdf: 'SDFObject'):
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+def visualize_sdf(*sdf_objects: 'SDFObject'):
+    """
+    Visualizes a variable number of SDFObjects.
     
-    # Assuming original_sdf.sdf_data and predicted_sdf.sdf_data are numpy arrays
-    # Use np.squeeze to remove single-dimensional entries from the shape
-    original_data = np.squeeze(original_sdf.sdf_data)
-    predicted_data = np.squeeze(predicted_sdf.sdf_data)
+    Args:
+        *sdf_objects: A variable number of SDFObject instances to be visualized.
+    """
+    num_objects = len(sdf_objects)
+    fig, axs = plt.subplots(1, num_objects, figsize=(5 * num_objects, 5))
     
-    # # Check if the original or predicted SDF data contains all the same values
-    # if np.all(original_data == original_data[0,0]):
-    #     print("Warning: Original SDF data contains all the same values.")
-    # if np.all(predicted_data == predicted_data[0,0]):
-    #     print("Warning: Predicted SDF data contains all the same values.")
+    if num_objects == 1:  # If there's only one object, axs is not a list but a single AxesSubplot
+        axs = [axs]
     
-    # Automatically determine the min and max values for original and predicted SDFs for proper visualization
-    original_min, original_max = original_data.min(), original_data.max()
-    predicted_min, predicted_max = predicted_data.min(), predicted_data.max()
-    
-    # Visualize the original and predicted SDFs with their respective min and max values for normalization
-    im1 = axs[0].imshow(original_data, cmap='RdBu', vmin=original_min, vmax=original_max)
-    axs[0].set_title('Original SDF')
-    fig.colorbar(im1, ax=axs[0], fraction=0.046, pad=0.04)  # Add a colorbar to the first subplot
-    
-    im2 = axs[1].imshow(predicted_data, cmap='RdBu', vmin=predicted_min, vmax=predicted_max)
-    axs[1].set_title('Predicted SDF')
-    fig.colorbar(im2, ax=axs[1], fraction=0.046, pad=0.04)  # Add a colorbar to the second subplot
+    for ax, sdf_object in zip(axs, sdf_objects):
+        # Assuming sdf_object.sdf_data is a numpy array
+        # Use np.squeeze to remove single-dimensional entries from the shape
+        data = np.squeeze(sdf_object.sdf_data)
+        
+        # Automatically determine the min and max values for the SDF for proper visualization
+        data_min, data_max = data.min(), data.max()
+        
+        # Visualize the SDF with its respective min and max values for normalization
+        im = ax.imshow(data, cmap='RdBu', vmin=data_min, vmax=data_max)
+        ax.set_title(f'{sdf_object.name}')  # Ideally, we'd use variable names, but Python doesn't support that directly
+        
+        # Add a colorbar to the subplot
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     
     plt.show()

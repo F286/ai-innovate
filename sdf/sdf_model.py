@@ -46,20 +46,22 @@ import torch.nn.functional as F
 class SDFNet(nn.Module):
     def __init__(self):
         super(SDFNet, self).__init__()
-        self.conv0 = nn.Conv2d(1, 4, kernel_size=3, padding=1, bias=True)
-        self.conv1 = nn.Conv2d(4, 4, kernel_size=3, padding=1, bias=True)
-        self.conv2 = nn.Conv2d(4, 1, kernel_size=3, padding=1, bias=True)
-        self.relu = nn.ReLU()
+
+        self.conv0 = nn.Conv2d(1, 1, kernel_size=1, padding=1, bias=False)
+
+        # self.conv0 = nn.Conv2d(1, 4, kernel_size=3, padding=1, bias=True)
+        # self.conv1 = nn.Conv2d(4, 4, kernel_size=3, padding=1, bias=True)
+        # self.conv2 = nn.Conv2d(4, 1, kernel_size=3, padding=1, bias=True)
+        # self.relu = nn.ReLU()
 
     def forward(self, x):
-        # x = x.unsqueeze(1)  # Adding channel dimension
+        x = self.conv0(x)
 
-        x = self.relu(self.conv0(x))
+        # x = self.relu(self.conv0(x))
 
-        for _ in range(1):  # Sequential convolutions with the same weights
-            x = self.relu(self.conv1(x))
+        # for _ in range(1):  # Sequential convolutions with the same weights
+        #     x = self.relu(self.conv1(x))
 
-        x = self.relu(self.conv2(x))
+        # x = self.relu(self.conv2(x))
 
         return x
-        # return x.squeeze(1)  # Removing channel dimension for output

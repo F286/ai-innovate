@@ -9,7 +9,7 @@ from .sdf_model import SDFNet
 from .train import train_model
 # from predict import predict  # Uncomment if prediction functionality is needed
 
-from .visualization import visualize_comparison
+from .visualization import visualize_sdf
 from .sdf_object import SDFObject
 
 def visualize_first_entry(train_dir):
@@ -19,7 +19,7 @@ def visualize_first_entry(train_dir):
     edge_voxels_sdf = sdf_object.get_edge_voxels()
     target_sdf = sdf_object.get_target()
     
-    visualize_comparison(edge_voxels_sdf, target_sdf)
+    visualize_sdf(sdf_object, edge_voxels_sdf, target_sdf)
 
 
 def evaluate_and_visualize(model: SDFNet, input_path: str) -> None:
@@ -44,16 +44,16 @@ def evaluate_and_visualize(model: SDFNet, input_path: str) -> None:
         predicted_sdf_array = model(edge_voxels_input).squeeze(0).cpu().numpy()  # Remove batch dimension
 
     # Convert the predicted numpy array back to an SDFObject for visualization
-    predicted_sdf_object = SDFObject(predicted_sdf_array)
+    predicted_sdf_object = SDFObject(predicted_sdf_array, "Predicted")
 
     # Visualize the original and predicted SDF
-    visualize_comparison(sdf_object, predicted_sdf_object)
+    visualize_sdf(sdf_object, sdf_object.get_edge_voxels(), sdf_object.get_target(), predicted_sdf_object)
 
 if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data
     
     # Visualize the first entry
-    # visualize_first_entry(train_dir)
+    visualize_first_entry(train_dir)
 
 
     # Train the model and receive the trained model directly

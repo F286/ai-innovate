@@ -3,13 +3,18 @@ import matplotlib.pyplot as plt
 import torch
 
 class SDFObject:
-    def __init__(self, sdf_data):
+    def __init__(self, sdf_data, name: str):
         self.sdf_data = sdf_data
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     @staticmethod
     def load(filename):
         sdf_data = np.load(filename)
-        return SDFObject(sdf_data)
+        return SDFObject(sdf_data, filename)
 
     def get_edge_voxels(self) -> 'SDFObject':
         """
@@ -25,7 +30,7 @@ class SDFObject:
         edge_voxels = np.expand_dims((self.sdf_data < 0.1).astype(np.float32), axis=0)
 
         # Instead of returning a tensor, we return a new SDFObject containing the edge voxels.
-        return SDFObject(edge_voxels)
+        return SDFObject(edge_voxels, "Edge Voxels")
 
     def get_edge_voxels_tensor(self) -> 'torch.Tensor':
         """
@@ -53,11 +58,11 @@ class SDFObject:
         Returns:
             SDFObject: An instance of SDFObject containing the processed target data.
         """
-        # np.abs computes the absolute value of each element in the sdf_data.
-        # .astype(np.float32) ensures the data is in float32 format, suitable for most deep learning operations.
-        target = np.abs(self.sdf_data).astype(np.float32)
+        target = np.expand_dims((self.sdf_data < 0.1).astype(np.float32), axis=0)
+        # target = np.expand_dims((self.sdf_data < 1.1).astype(np.float32), axis=0)
+
         # Instead of returning a tensor, we return a new SDFObject containing the target data.
-        return SDFObject(target)
+        return SDFObject(target, "Target")
 
     def get_target_tensor(self) -> 'torch.Tensor':
         """
@@ -66,9 +71,6 @@ class SDFObject:
         Returns:
             torch.Tensor: A tensor containing the processed target data.
         """
-        # Call the original get_target method to get the SDFObject with processed target data
         target_sdf = self.get_target()
-        # Convert the numpy array inside the SDFObject to a PyTorch tensor
         target_tensor = torch.from_numpy(target_sdf.sdf_data)
-        target_tensor = target_tensor.unsqueeze(0)
         return target_tensor
