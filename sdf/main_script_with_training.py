@@ -53,8 +53,7 @@ if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data
     
     # Visualize the first entry
-    visualize_first_entry(train_dir)
-
+    # visualize_first_entry(train_dir)
 
     # Train the model and receive the trained model directly
     trained_model = train_model(train_dir)

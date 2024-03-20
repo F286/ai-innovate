@@ -47,15 +47,27 @@ class SDFNet(nn.Module):
     def __init__(self):
         super(SDFNet, self).__init__()
 
-        self.conv0 = nn.Conv2d(1, 1, kernel_size=1, padding=1, bias=False)
+        self.conv0 = nn.Conv2d(1, 8, kernel_size=1, padding=0, bias=False)
+        self.conv1 = nn.Conv2d(8, 8, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(8, 8, kernel_size=3, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(8, 1, kernel_size=1, padding=0, bias=False)
+
+        # self.conv0 = nn.Conv2d(1, 1, kernel_size=1, padding=0, bias=False)
 
         # self.conv0 = nn.Conv2d(1, 4, kernel_size=3, padding=1, bias=True)
         # self.conv1 = nn.Conv2d(4, 4, kernel_size=3, padding=1, bias=True)
         # self.conv2 = nn.Conv2d(4, 1, kernel_size=3, padding=1, bias=True)
-        # self.relu = nn.ReLU()
+        self.relu = nn.ReLU()
 
     def forward(self, x):
+
         x = self.conv0(x)
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+
+        # x = self.conv0(x)
 
         # x = self.relu(self.conv0(x))
 
