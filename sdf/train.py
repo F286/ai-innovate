@@ -4,9 +4,10 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from .sdf_model import SDFNet
 from .sdf_dataset import SDFDataset
+from .callbacks import Callback 
 import os
 
-def train_model(train_dir: str) -> SDFNet:
+def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -18,7 +19,7 @@ def train_model(train_dir: str) -> SDFNet:
     train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=True)
 
     model.train()
-    for epoch in range(2000):  # Example: 10 epochs
+    for epoch in range(10000):
         for edge_voxels, target in train_loader:
             edge_voxels, target = edge_voxels.to(device), target.to(device)
             optimizer.zero_grad()
@@ -27,5 +28,9 @@ def train_model(train_dir: str) -> SDFNet:
             loss.backward()
             optimizer.step()
         print(f"Epoch {epoch}, Loss: {loss.item()}")
+        
+        if callback is not None:
+            callback.on_epoch_end(epoch, model)
+
 
     return model  # Return the trained model

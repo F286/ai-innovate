@@ -7,10 +7,10 @@ import sys
 
 from .sdf_model import SDFNet
 from .train import train_model
-# from predict import predict  # Uncomment if prediction functionality is needed
 
 from .visualization import visualize_sdf
 from .sdf_object import SDFObject
+from .evaluate_and_visualize_callback import EvaluateAndVisualizeCallback
 
 def visualize_first_entry(train_dir):
     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
@@ -22,44 +22,21 @@ def visualize_first_entry(train_dir):
     visualize_sdf(sdf_object, edge_voxels_sdf, target_sdf)
 
 
-def evaluate_and_visualize(model: SDFNet, input_path: str) -> None:
-    """
-    Evaluates a given input using a trained model and visualizes the prediction.
-
-    Parameters:
-    - model: The trained SDFNet model.
-    - input_path: Path to the input data for evaluation.
-    """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)  # Ensure the model is on the correct device
-    model.eval()  # Set the model to evaluation mode
-
-    # Load the input data
-    sdf_object = SDFObject.load(input_path)
-    edge_voxels_input = sdf_object.get_edge_voxels_tensor().to(device)
-
-    # Perform prediction
-    with torch.no_grad():
-        # edge_voxels_input = torch.tensor(edge_voxels_input).float().unsqueeze(0)  # Add batch dimension
-        predicted_sdf_array = model(edge_voxels_input).squeeze(0).cpu().numpy()  # Remove batch dimension
-
-    # Convert the predicted numpy array back to an SDFObject for visualization
-    predicted_sdf_object = SDFObject(predicted_sdf_array, "Predicted")
-
-    # Visualize the original and predicted SDF
-    visualize_sdf(sdf_object, sdf_object.get_edge_voxels(), sdf_object.get_target(), predicted_sdf_object)
-
 if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data
+    input_path = 'sdf/sdf_evaluate/sample_input.npy'
     
     # Visualize the first entry
     # visualize_first_entry(train_dir)
 
+    # Initialize your callback
+    callback = EvaluateAndVisualizeCallback(input_path, visualize_every_n_epochs=10)
+    
     # Train the model and receive the trained model directly
-    trained_model = train_model(train_dir)
+    trained_model = train_model(train_dir, callback=callback)
     
     # Path to the sample input for evaluation
     input_path = 'sdf/sdf_evaluate/sample_input.npy'
 
     # Evaluate the model and visualize the results using the trained model directly
-    evaluate_and_visualize(trained_model, input_path)
+    # evaluate_and_visualize(trained_model, input_path)

@@ -29,5 +29,5 @@ def visualize_sdf(*sdf_objects: 'SDFObject'):
         
         # Add a colorbar to the subplot
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    
-    plt.show()
+        
+    plt.show()  # Non-blocking show
