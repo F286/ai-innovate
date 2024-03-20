@@ -36,7 +36,7 @@ class EvaluateAndVisualizeCallback(Callback):
     """
     Callback for evaluating and visualizing model performance.
     """
-    def __init__(self, input_path, visualize_every_n_epochs=5000):
+    def __init__(self, input_path, visualize_every_n_epochs=10):
         self.input_path = input_path
         self.visualize_every_n_epochs = visualize_every_n_epochs
 
