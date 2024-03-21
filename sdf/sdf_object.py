@@ -24,10 +24,14 @@ class SDFObject:
         Returns:
             SDFObject: An instance of SDFObject containing the edge voxels.
         """
-        # Assuming 'edge' voxels are those with a value of 0
-        # np.expand_dims adds an axis, making the array compatible for operations that expect an additional dimension.
-        # (self.sdf_data == 0).astype(np.float32) creates a binary mask of the edge voxels, converting True/False to 1.0/0.0.
-        edge_voxels = np.expand_dims((self.sdf_data < 0.1).astype(np.float32), axis=0)
+        # To identify edge voxels, we're looking for voxels with values less than 0.1 and greater than -1.1.
+        # This range captures the desired edge definition for our application.
+        # np.logical_and combines two conditions, checking for values both less than 0.1 and greater than -1.1.
+        # The result is a boolean mask where True represents voxels within our defined edge criteria.
+        # (self.sdf_data < 0.1) & (self.sdf_data > -1.1) creates this boolean mask based on our conditions.
+        # .astype(np.float32) converts the boolean mask to a float mask, turning True/False into 1.0/0.0, making it compatible for further processing.
+        # np.expand_dims adds an axis, making the array compatible for operations that expect an additional dimension, such as certain neural network inputs.
+        edge_voxels = np.expand_dims(((self.sdf_data < 0.1) & (self.sdf_data > -1.1)).astype(np.float32), axis=0)
 
         # Instead of returning a tensor, we return a new SDFObject containing the edge voxels.
         return SDFObject(edge_voxels, "Edge Voxels")

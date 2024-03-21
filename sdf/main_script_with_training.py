@@ -30,7 +30,7 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    callback = EvaluateAndVisualizeCallback(input_path, visualize_every_n_epochs=5000)
+    callback = EvaluateAndVisualizeCallback(input_path, visualize_every_n_epochs=1000)
     
     # Train the model and receive the trained model directly
     trained_model = train_model(train_dir, callback=callback)
