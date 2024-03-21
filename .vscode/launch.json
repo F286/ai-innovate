@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Generate Data Script",
+            "type": "python",
+            "request": "launch",
+            "module": "sdf.main_script_generate_data",
+            "justMyCode": true
+        },
+        {
             "name": "Python: Main Script with Training",
             "type": "python",
             "request": "launch",

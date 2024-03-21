@@ -25,7 +25,7 @@ from .evaluate_and_visualize_callback import EvaluateAndVisualizeCallback
 
 if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data
-    input_path = 'sdf/sdf_evaluate/sdf_varation_input.npy'
+    input_path = 'sdf/sdf_evaluate/sdf_variation_input.npy'
     
     # Visualize the first entry
     # visualize_first_entry(train_dir)
