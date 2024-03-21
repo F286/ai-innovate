@@ -16,8 +16,8 @@ class SDFDataset(Dataset):
         edge_voxels = sdf_object.get_edge_voxels_tensor()
         target = sdf_object.get_target_tensor()
         
-        assert edge_voxels.shape == (1, 100, 100), f"Edge voxels shape must be [1, 100, 100], got {edge_voxels.shape}"
-        assert target.shape == (1, 100, 100), f"Target shape must be [1, 100, 100], got {target.shape}"
+        assert edge_voxels.shape == (1, 128, 128), f"Edge voxels shape must be [1, 128, 128], got {edge_voxels.shape}"
+        assert target.shape == (1, 128, 128), f"Target shape must be [1, 128, 128], got {target.shape}"
 
         return edge_voxels, target
 

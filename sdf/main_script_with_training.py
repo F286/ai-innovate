@@ -25,13 +25,13 @@ from .evaluate_and_visualize_callback import EvaluateAndVisualizeCallback
 
 if __name__ == "__main__":
     train_dir = 'sdf/sdf_variations'  # Define the path to your training data
-    input_path = 'sdf/sdf_evaluate/sample_input.npy'
+    input_path = 'sdf/sdf_evaluate/sdf_varation_input.npy'
     
     # Visualize the first entry
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    writer = SummaryWriter('sdf/jump_flood_max')
+    writer = SummaryWriter('sdf/jump_flood_max_2')
     callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
 
     trained_model = train_model(train_dir, callback=callback)

@@ -8,4 +8,4 @@ class SDFGenerator:
         outside_distances = distance_transform_edt(1 - dense_grid)
         inside_distances = distance_transform_edt(dense_grid)
         sdf = outside_distances - inside_distances
-        return SDFObject(sdf)
+        return SDFObject(sdf, "Generated")

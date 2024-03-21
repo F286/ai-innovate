@@ -10,10 +10,10 @@ np.random.seed(42)  # Set seed for consistent randomness
 
 def generate_variations_and_save(sdf_folder='sdf/sdf_variations'):
     os.makedirs(sdf_folder, exist_ok=True)  # Create the sub-folder if it doesn't exist
-    shape_gen = ShapeGenerator(grid_size=(100, 100))
+    shape_gen = ShapeGenerator(grid_size=(128, 128))
 
-    for i in range(1024):
-        num_boxes = np.random.randint(1, 4)  # Randomly decide to generate 1 to 3 boxes
+    for i in range(1024 * 8 + 1):
+        num_boxes = np.random.randint(1, 16)  # Randomly decide to generate 1 to 3 boxes
         combined_dense_grid = np.zeros(shape_gen.grid_size, dtype=np.int8)
 
         for _ in range(num_boxes):

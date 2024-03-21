@@ -6,4 +6,4 @@ def save_sdf(filename, sdf_object):
 
 def load_sdf(filename):
     sdf_data = np.load(filename)
-    return SDFObject(sdf_data)
+    return SDFObject(sdf_data, "Loaded")
