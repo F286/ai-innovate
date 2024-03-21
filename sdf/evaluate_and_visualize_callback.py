@@ -8,7 +8,11 @@ from .sdf_model import SDFNet
 from .callbacks import Callback
 from torch.utils.tensorboard import SummaryWriter
 
-def evaluate_and_visualize(model: SDFNet, input_path: str, writer: SummaryWriter, epoch: int) -> None:
+
+def evaluate_and_visualize(model: SDFNet, input_path: str, writer: SummaryWriter, epoch: int, loss: float) -> None:
+    
+    writer.add_scalar('Loss', loss, epoch)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
@@ -40,6 +44,6 @@ class EvaluateAndVisualizeCallback(Callback):
         self.writer = writer
         self.visualize_every_n_epochs = visualize_every_n_epochs
 
-    def on_epoch_end(self, epoch, model):
+    def on_epoch_end(self, epoch, model, loss: float):
         if (epoch + 1) % self.visualize_every_n_epochs == 0:
-            evaluate_and_visualize(model, self.input_path, self.writer, epoch)
+            evaluate_and_visualize(model, self.input_path, self.writer, epoch=epoch, loss=loss)

@@ -30,7 +30,9 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
         print(f"Epoch {epoch}, Loss: {loss.item()}")
         
         if callback is not None:
-            callback.on_epoch_end(epoch, model)
+            # Ensuring loss.item() returns a float for consistency in callback handling
+            loss_value = float(loss.item())
+            callback.on_epoch_end(epoch, model, loss=loss_value)
 
 
     return model  # Return the trained model
