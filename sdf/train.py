@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.optim as optim
+from transformers import Adafactor
 from .sdf_model import SDFNet
 from .sdf_dataset import SDFDataset
 from .callbacks import Callback 
@@ -10,7 +11,8 @@ import os
 def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = Adafactor(model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)
     criterion = nn.MSELoss()
 
     # Assuming the training data is in 'train_dir'
