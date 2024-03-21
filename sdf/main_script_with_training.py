@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch
 import os
 import sys
+from torch.utils.tensorboard import SummaryWriter
 
 from .sdf_model import SDFNet
 from .train import train_model
@@ -12,14 +13,14 @@ from .visualization import visualize_sdf
 from .sdf_object import SDFObject
 from .evaluate_and_visualize_callback import EvaluateAndVisualizeCallback
 
-def visualize_first_entry(train_dir):
-    train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
-    first_file = train_files[5]
-    sdf_object = SDFObject.load(first_file)
-    edge_voxels_sdf = sdf_object.get_edge_voxels()
-    target_sdf = sdf_object.get_target()
+# def visualize_first_entry(train_dir):
+#     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
+#     first_file = train_files[5]
+#     sdf_object = SDFObject.load(first_file)
+#     edge_voxels_sdf = sdf_object.get_edge_voxels()
+#     target_sdf = sdf_object.get_target()
     
-    visualize_sdf(sdf_object, edge_voxels_sdf, target_sdf)
+#     visualize_sdf(sdf_object, edge_voxels_sdf, target_sdf)
 
 
 if __name__ == "__main__":
@@ -30,13 +31,13 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    callback = EvaluateAndVisualizeCallback(input_path, visualize_every_n_epochs=1000)
-    
-    # Train the model and receive the trained model directly
+    writer = SummaryWriter('sdf/jump_flood_0')
+    callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
+
     trained_model = train_model(train_dir, callback=callback)
     
     # Path to the sample input for evaluation
-    input_path = 'sdf/sdf_evaluate/sample_input.npy'
+    # input_path = 'sdf/sdf_evaluate/sample_input.npy'
 
     # Evaluate the model and visualize the results using the trained model directly
     # evaluate_and_visualize(trained_model, input_path)

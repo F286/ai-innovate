@@ -19,7 +19,7 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=True)
 
     model.train()
-    for epoch in range(10000):
+    for epoch in range(1000000):
         for edge_voxels, target in train_loader:
             edge_voxels, target = edge_voxels.to(device), target.to(device)
             optimizer.zero_grad()
