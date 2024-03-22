@@ -24,7 +24,10 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     scaler = GradScaler()
 
     model.train()
-    for epoch in range(1000000):  # Consider setting a more realistic number of epochs
+    for epoch in range(1000000):
+        epoch_loss = 0.0  # Initialize epoch loss
+        num_batches = 0  # Initialize batch counter
+
         for edge_voxels, target in train_loader:
             edge_voxels, target = edge_voxels.to(device), target.to(device)
 
@@ -35,22 +38,26 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
                 output = model(edge_voxels)
                 loss = criterion(output, target)
 
-            # Scale the loss and call backward
-            # to create scaled gradients
+            # Scale the loss and call backward to create scaled gradients
             scaler.scale(loss).backward()
 
-            # Unscales the gradients and calls
-            # or skips optimizer.step()
+            # Unscales the gradients and calls or skips optimizer.step()
             scaler.step(optimizer)
 
             # Updates the scale for next iteration
             scaler.update()
 
-            print(f"Epoch {epoch}, Loss: {loss.item()}")
+            epoch_loss += float(loss.item())  # Accumulate loss for the epoch
+            num_batches += 1  # Increment batch counter
 
-            if callback is not None:
-                # Ensuring loss.item() returns a float for consistency in callback handling
-                loss_value = float(loss.item())
-                callback.on_epoch_end(epoch, model, loss=loss_value)
+            print(f"Epoch {epoch}, Batch Loss: {loss.item()}")
+
+        epoch_loss /= num_batches  # Calculate average loss for the epoch
+
+        if callback is not None:
+            # Call the callback with the average loss for the epoch
+            callback.on_epoch_end(epoch, model, loss=epoch_loss)
+
+        print(f"Epoch {epoch}, Average Loss: {epoch_loss}")
 
     return model  # Return the trained model
