@@ -31,7 +31,7 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    writer = SummaryWriter('sdf/jump_flood_max_6')
+    writer = SummaryWriter('sdf/min_0')
     callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
 
     trained_model = train_model(train_dir, callback=callback)
