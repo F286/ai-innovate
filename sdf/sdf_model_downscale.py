@@ -2,104 +2,82 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
-
 class SDFNet(nn.Module):
     def __init__(self):
         super(SDFNet, self).__init__()
 
-        STORAGE_SIZE = 8
-        HIDDEN_SIZE = 16
-        EXPAND_SIZE = 8
+        # Constants for sizes
+        INITIAL_FEATURES = 16
+        MIDDLE_SIZE = 32
 
-        self.conv0 = nn.Conv2d(1, STORAGE_SIZE, kernel_size=1, padding=0, bias=True)
+        # Initial Convolution
+        self.initial_conv = nn.Conv2d(1, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True)
 
-        # Sequential operation with kernel sampling from distance 64, preserving input/output size
-        self.seq_sampling_64 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=1, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
+        # Contracting Path (Downscaling)
+        self.down_convs = nn.ModuleList()
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        for _ in range(5):
+            self.down_convs.append(
+                nn.Sequential(
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.ReLU(),
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.ReLU()
+                )
+            )
+            
+        # Middle Part
+        self.middle_convs = nn.Sequential(
+            nn.Conv2d(INITIAL_FEATURES, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
             nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
-        
-        # Downscale
-        self.downscale_1 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # Sequential operation with kernel sampling from distance 32, preserving input/output size
-        self.seq_sampling_32 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=32, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
+            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
             nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
-
-        # Sequential operation with kernel sampling from distance 16, preserving input/output size
-        self.seq_sampling_16 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=16, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
+            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
             nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
-
-        # Sequential operation with kernel sampling from distance 8, preserving input/output size
-        self.seq_sampling_8 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=8, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
+            nn.Conv2d(MIDDLE_SIZE, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+            nn.ReLU()
         )
 
-        # Sequential operation with kernel sampling from distance 4
-        self.seq_sampling_4 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=4, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
+        # Expanding Path (Upscaling)
+        self.up_transposes = nn.ModuleList()
+        self.up_convs = nn.ModuleList()
+        for _ in range(5):
+            self.up_transposes.append(
+                nn.ConvTranspose2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=2, stride=2)
+            )
+            self.up_convs.append(
+                nn.Sequential(
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.ReLU(),
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.ReLU()
+                )
+            )
 
-        # Sequential operation with kernel sampling from distance 2
-        self.seq_sampling_2 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=2, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
-        
-        # Upscaling
-        self.upscale_1 = nn.ConvTranspose2d(EXPAND_SIZE, EXPAND_SIZE, kernel_size=2, stride=2)
+        # Final Convolution
+        self.final_conv = nn.Conv2d(INITIAL_FEATURES, 1, kernel_size=1)
 
-        # Original sequential operation with stride 1
-        self.seq_stride_1 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=1, bias=True),
-            nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
-            nn.ReLU(),
-            nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
-        )
-
-        self.conv3 = nn.Conv2d(STORAGE_SIZE, 1, kernel_size=1, padding=0, bias=True)
     def forward(self, x):
+        # Initial Convolution
+        x = self.initial_conv(x)
 
-        x = self.conv0(x)
+        # Contracting Path
+        contracting_path_features = []
+        for down_conv in self.down_convs:
+            x = down_conv(x)
+            contracting_path_features.append(x)
+            x = self.pool(x)
 
-        # Apply the sequential operations with different strides and take the maximum between the current value and the result for a residual-like behavior
-        x = x + self.seq_sampling_64(x)
-        
-        # Downscale
-        x = self.downscale_1(x)
+        # Middle Part
+        x = self.middle_convs(x)
 
-        x = x + self.seq_sampling_32(x)
-        x = x + self.seq_sampling_16(x)
-        x = x + self.seq_sampling_8(x)
-        x = x + self.seq_sampling_4(x)
-        x = x + self.seq_sampling_2(x)
-        
-        # Upscale
-        x = self.upscale_1(x)
+        # Expanding Path
+        for up_transpose, up_conv, features in zip(self.up_transposes, self.up_convs, reversed(contracting_path_features)):
+            x = up_transpose(x)
+            x = x + features
+            # x = torch.cat([x, features], dim=1)
+            x = up_conv(x)
 
-        x = x + self.seq_stride_1(x)
-        
-        x = self.conv3(x)
-
-        return x
-    
+        # Final Convolution
+        out = self.final_conv(x)
+        return out
