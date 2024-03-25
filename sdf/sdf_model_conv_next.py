@@ -17,7 +17,10 @@ class SDFNet(nn.Module):
 
         # Contracting Path (Downscaling)
         self.down_convs = nn.ModuleList()
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        # Creating separate instances for each downscale layer
+        self.downscale_convs = nn.ModuleList([
+            nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=2, stride=2, padding=0, bias=False) for _ in range(5)
+        ])
         for _ in range(5):
             self.down_convs.append(
                 nn.Sequential(
@@ -75,10 +78,10 @@ class SDFNet(nn.Module):
 
         # Contracting Path
         contracting_path_features = []
-        for down_conv in self.down_convs:
+        for down_conv, downscale_conv in zip(self.down_convs, self.downscale_convs):
             x = down_conv(x)
             contracting_path_features.append(x)
-            x = self.pool(x)
+            x = downscale_conv(x)
 
         # Middle Part
         x = self.middle_convs(x)
