@@ -11,7 +11,11 @@ class SDFNet(nn.Module):
         MIDDLE_SIZE = 32
 
         # Initial Convolution
-        self.initial_conv = nn.Conv2d(1, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True)
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(1, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+            nn.BatchNorm2d(INITIAL_FEATURES),
+            nn.ReLU()
+        )
 
         # Contracting Path (Downscaling)
         self.down_convs = nn.ModuleList()
@@ -19,22 +23,28 @@ class SDFNet(nn.Module):
         for _ in range(5):
             self.down_convs.append(
                 nn.Sequential(
-                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+                    nn.BatchNorm2d(INITIAL_FEATURES),
                     nn.ReLU(),
-                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+                    nn.BatchNorm2d(INITIAL_FEATURES),
                     nn.ReLU()
                 )
             )
             
         # Middle Part
         self.middle_convs = nn.Sequential(
-            nn.Conv2d(INITIAL_FEATURES, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+            nn.Conv2d(INITIAL_FEATURES, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+            nn.BatchNorm2d(MIDDLE_SIZE),
             nn.ReLU(),
-            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+            nn.BatchNorm2d(MIDDLE_SIZE),
             nn.ReLU(),
-            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+            nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+            nn.BatchNorm2d(MIDDLE_SIZE),
             nn.ReLU(),
-            nn.Conv2d(MIDDLE_SIZE, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+            nn.Conv2d(MIDDLE_SIZE, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+            nn.BatchNorm2d(INITIAL_FEATURES),
             nn.ReLU()
         )
 
@@ -43,13 +53,15 @@ class SDFNet(nn.Module):
         self.up_convs = nn.ModuleList()
         for _ in range(5):
             self.up_transposes.append(
-                nn.ConvTranspose2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=2, stride=2)
+                nn.ConvTranspose2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=2, stride=2, bias=False)
             )
             self.up_convs.append(
                 nn.Sequential(
-                    nn.Conv2d(INITIAL_FEATURES * 2, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.Conv2d(INITIAL_FEATURES * 2, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+                    nn.BatchNorm2d(INITIAL_FEATURES),
                     nn.ReLU(),
-                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=False),
+                    nn.BatchNorm2d(INITIAL_FEATURES),
                     nn.ReLU()
                 )
             )
