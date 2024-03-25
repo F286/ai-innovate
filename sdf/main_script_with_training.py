@@ -6,7 +6,6 @@ import os
 import sys
 from torch.utils.tensorboard import SummaryWriter
 
-from .sdf_model import SDFNet
 from .train import train_model
 
 from .visualization import visualize_sdf
@@ -31,7 +30,7 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    writer = SummaryWriter('sdf/min_0')
+    writer = SummaryWriter('sdf/downscale_0')
     callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
 
     trained_model = train_model(train_dir, callback=callback)

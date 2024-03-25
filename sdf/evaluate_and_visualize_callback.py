@@ -4,12 +4,11 @@ import matplotlib.pyplot as plt
 from torchvision.transforms import ToTensor
 from .visualization import visualize_sdf
 from .sdf_object import SDFObject
-from .sdf_model import SDFNet
 from .callbacks import Callback
 from torch.utils.tensorboard import SummaryWriter
 
 
-def evaluate_and_visualize(model: SDFNet, input_path: str, writer: SummaryWriter, epoch: int, loss: float) -> None:
+def evaluate_and_visualize(model, input_path: str, writer: SummaryWriter, epoch: int, loss: float) -> None:
     
     writer.add_scalar('Loss', loss, epoch)
 

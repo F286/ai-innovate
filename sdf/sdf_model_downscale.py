@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+
+
 class SDFNet(nn.Module):
     def __init__(self):
         super(SDFNet, self).__init__()
@@ -15,14 +17,18 @@ class SDFNet(nn.Module):
 
         # Sequential operation with kernel sampling from distance 64, preserving input/output size
         self.seq_sampling_64 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=64, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=1, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
         )
+        
+        # Downscale
+        self.downscale_1 = nn.MaxPool2d(kernel_size=2, stride=2)
+
         # Sequential operation with kernel sampling from distance 32, preserving input/output size
         self.seq_sampling_32 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=32, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=32, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
@@ -30,7 +36,7 @@ class SDFNet(nn.Module):
 
         # Sequential operation with kernel sampling from distance 16, preserving input/output size
         self.seq_sampling_16 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=16, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=16, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
@@ -38,7 +44,7 @@ class SDFNet(nn.Module):
 
         # Sequential operation with kernel sampling from distance 8, preserving input/output size
         self.seq_sampling_8 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=8, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=8, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
@@ -46,7 +52,7 @@ class SDFNet(nn.Module):
 
         # Sequential operation with kernel sampling from distance 4
         self.seq_sampling_4 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=4, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=4, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
@@ -54,15 +60,18 @@ class SDFNet(nn.Module):
 
         # Sequential operation with kernel sampling from distance 2
         self.seq_sampling_2 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=2, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=2, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
         )
+        
+        # Upscaling
+        self.upscale_1 = nn.ConvTranspose2d(EXPAND_SIZE, EXPAND_SIZE, kernel_size=2, stride=2)
 
         # Original sequential operation with stride 1
         self.seq_stride_1 = nn.Sequential(
-            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", dilation=1, bias=True),
+            nn.Conv2d(STORAGE_SIZE, HIDDEN_SIZE, kernel_size=3, padding="same", padding_mode="replicate", dilation=1, bias=True),
             nn.Conv2d(HIDDEN_SIZE, EXPAND_SIZE, kernel_size=1, padding=0, bias=True),
             nn.ReLU(),
             nn.Conv2d(EXPAND_SIZE, STORAGE_SIZE, kernel_size=1, padding=0, bias=True),
@@ -75,11 +84,19 @@ class SDFNet(nn.Module):
 
         # Apply the sequential operations with different strides and take the maximum between the current value and the result for a residual-like behavior
         x = x + self.seq_sampling_64(x)
+        
+        # Downscale
+        x = self.downscale_1(x)
+
         x = x + self.seq_sampling_32(x)
         x = x + self.seq_sampling_16(x)
         x = x + self.seq_sampling_8(x)
         x = x + self.seq_sampling_4(x)
         x = x + self.seq_sampling_2(x)
+        
+        # Upscale
+        x = self.upscale_1(x)
+
         x = x + self.seq_stride_1(x)
         
         x = self.conv3(x)
