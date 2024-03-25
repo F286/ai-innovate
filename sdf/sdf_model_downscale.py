@@ -47,7 +47,7 @@ class SDFNet(nn.Module):
             )
             self.up_convs.append(
                 nn.Sequential(
-                    nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
+                    nn.Conv2d(INITIAL_FEATURES * 2, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
                     nn.ReLU(),
                     nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES, kernel_size=3, padding="same", padding_mode="replicate", bias=True),
                     nn.ReLU()
@@ -74,8 +74,8 @@ class SDFNet(nn.Module):
         # Expanding Path
         for up_transpose, up_conv, features in zip(self.up_transposes, self.up_convs, reversed(contracting_path_features)):
             x = up_transpose(x)
-            x = x + features
-            # x = torch.cat([x, features], dim=1)
+            # x = x + features
+            x = torch.cat([x, features], dim=-3)
             x = up_conv(x)
 
         # Final Convolution

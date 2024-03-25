@@ -13,7 +13,8 @@ import os
 def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = Adafactor(model.parameters())
     criterion = nn.SmoothL1Loss()
 
     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
