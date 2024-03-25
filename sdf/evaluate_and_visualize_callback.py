@@ -18,6 +18,7 @@ def evaluate_and_visualize(model, input_path: str, writer: SummaryWriter, epoch:
 
     sdf_object = SDFObject.load(input_path)
     edge_voxels_input = sdf_object.get_edge_voxels_tensor().to(device)
+    edge_voxels_input = edge_voxels_input.unsqueeze(0)
 
     with torch.no_grad():
         predicted_sdf_array = model(edge_voxels_input).squeeze(0).cpu().numpy()
