@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 # Assuming Adafactor might be used in some scenarios, keeping the import
 from transformers import Adafactor
-from .sdf_model_downscale import SDFNet
+from .sdf_model_conv_next import SDFNet
 from .sdf_dataset import SDFDataset
 from .callbacks import Callback
 from torch.cuda.amp import autocast, GradScaler
@@ -19,6 +19,7 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
 
     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
     train_dataset = SDFDataset(train_files)
+    # train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=1, prefetch_factor=64, persistent_workers=True)
     train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=16, prefetch_factor=64, persistent_workers=True)
 
     # Initialize the gradient scaler

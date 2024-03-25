@@ -1,4 +1,3 @@
-
 from .sdf_dataset import SDFDataset
 from torch.utils.data import DataLoader
 import torch
@@ -30,7 +29,7 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    writer = SummaryWriter('sdf/downscale_4')
+    writer = SummaryWriter('sdf/conv_next1')
     callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
 
     trained_model = train_model(train_dir, callback=callback)
