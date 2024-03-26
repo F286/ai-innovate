@@ -10,7 +10,7 @@ class SDFNet(nn.Module):
         INITIAL_FEATURES = 8
         MIDDLE_SIZE = 16
         FEED_FORWARD_EXPAND = 4
-        KERNEL_SIZE = 3 # 7
+        KERNEL_SIZE = 7
         INITIAL_EXTENTS = 128
         DOWNSCALE_LAYERS = 5
         MIDDLE_EXTENTS = INITIAL_EXTENTS // 2**DOWNSCALE_LAYERS
@@ -37,7 +37,7 @@ class SDFNet(nn.Module):
                     nn.LayerNorm([INITIAL_FEATURES, current_extents, current_extents]),
                     # Pointwise convolution to expand the channel size
                     nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
-                    nn.ReLU(),
+                    nn.GELU(),
                     # Feed-forward layer to contract back to the initial number of features
                     nn.Conv2d(INITIAL_FEATURES * FEED_FORWARD_EXPAND, INITIAL_FEATURES, kernel_size=1, bias=False)
                 )
@@ -56,7 +56,7 @@ class SDFNet(nn.Module):
                     nn.LayerNorm([MIDDLE_SIZE, MIDDLE_EXTENTS, MIDDLE_EXTENTS]),
                     # Pointwise convolution to expand the channel size
                     nn.Conv2d(MIDDLE_SIZE, MIDDLE_SIZE * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
-                    nn.ReLU(),
+                    nn.GELU(),
                     # Feed-forward layer to contract back to the initial number of features
                     nn.Conv2d(MIDDLE_SIZE * FEED_FORWARD_EXPAND, INITIAL_FEATURES, kernel_size=1, bias=False)
                 )
@@ -78,7 +78,7 @@ class SDFNet(nn.Module):
                     nn.LayerNorm([INITIAL_FEATURES, current_extents, current_extents]),
                     # Pointwise convolution to expand the channel size
                     nn.Conv2d(INITIAL_FEATURES, INITIAL_FEATURES * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
-                    nn.ReLU(),
+                    nn.GELU(),
                     # Feed-forward layer to contract back to the initial number of features
                     nn.Conv2d(INITIAL_FEATURES * FEED_FORWARD_EXPAND, INITIAL_FEATURES, kernel_size=1, bias=False)
                 )
