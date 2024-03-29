@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 # Assuming Adafactor might be used in some scenarios, keeping the import
 from transformers import Adafactor
-from .sdf_model_conv_next import SDFNet
+from .sdf_model_separable_conv import SDFNet
 from .sdf_dataset import SDFDataset
 from .callbacks import Callback
 from torch.cuda.amp import autocast, GradScaler
