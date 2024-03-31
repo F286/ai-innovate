@@ -7,13 +7,13 @@ class SDFNet(nn.Module):
         super(SDFNet, self).__init__()
 
         # Constants for sizes
-        LAYER_FEATURES = [4, 8, 16]  # This array directly specifies the number of features per layer
+        LAYER_FEATURES = [8, 16, 32]  # This array directly specifies the number of features per layer
         # LAYER_FEATURES = [16, 32, 64]  # This array directly specifies the number of features per layer
         # LAYER_FEATURES = [8, 16, 32, 64, 128, 256]  # This array directly specifies the number of features per layer
         FEED_FORWARD_EXPAND = 4
         KERNEL_SIZE = 3 # 7
-        INPUT_EXTENTS = 128
-        INITIAL_EXTENTS = 32
+        INPUT_EXTENTS = 256
+        INITIAL_EXTENTS = 64
         DOWNSCALE_LAYERS = len(LAYER_FEATURES) - 1  # The size of LAYER_FEATURES array sets DOWNSCALE_LAYERS
         MIDDLE_EXTENTS = INITIAL_EXTENTS // 2**DOWNSCALE_LAYERS
 
@@ -133,14 +133,14 @@ class SDFNet(nn.Module):
         self.final_conv = nn.Sequential(
                 # stem upscale
                 nn.ConvTranspose2d(LAYER_FEATURES[0], LAYER_FEATURES[0], kernel_size=4, stride=4, bias=False),
-                nn.LayerNorm([LAYER_FEATURES[0], INITIAL_EXTENTS, INITIAL_EXTENTS]),
+                nn.LayerNorm([LAYER_FEATURES[0], INPUT_EXTENTS, INPUT_EXTENTS]),
                 # nn.Conv2d(LAYER_FEATURES[0], 1, kernel_size=1),
                     
                 nn.Conv2d(LAYER_FEATURES[0], LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, kernel_size=1),  # Expands the channel dimension
                 nn.ReLU(),  # Activation function for non-linearity
                 nn.Conv2d(LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, LAYER_FEATURES[0], kernel_size=1),  # Contracts the channel dimension back
                 
-                nn.LayerNorm([LAYER_FEATURES[0], INITIAL_EXTENTS, INITIAL_EXTENTS]),
+                nn.LayerNorm([LAYER_FEATURES[0], INPUT_EXTENTS, INPUT_EXTENTS]),
                 
                 nn.Conv2d(LAYER_FEATURES[0], 1, kernel_size=1),
             )

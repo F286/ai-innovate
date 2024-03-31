@@ -62,7 +62,7 @@ class SDFObject:
         Returns:
             SDFObject: An instance of SDFObject containing the processed target data.
         """
-        target = np.expand_dims(np.clip((128 - np.abs(self.sdf_data)) / 128, 0, 1).astype(np.float32), axis=0)
+        target = np.expand_dims(np.clip((256 - np.abs(self.sdf_data)) / 256, 0, 1).astype(np.float32), axis=0)
 
         # Instead of returning a tensor, we return a new SDFObject containing the target data.
         return SDFObject(target, "Target")
