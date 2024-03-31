@@ -17,13 +17,13 @@ def generate_and_save_random_image(image_name: str):
     image_name (str): The full path including the name of the image to save.
     """
     shape_gen = ShapeGenerator(grid_size=(256, 256))
-    num_shapes = np.random.randint(5, 21)  # Randomly decide to generate 5 to 20 shapes
+    num_shapes = np.random.randint(4, 11)  # Randomly decide to generate 5 to 20 shapes
     combined_dense_grid = np.zeros(shape_gen.grid_size, dtype=np.int8)
 
     for _ in range(num_shapes):
         shape_type = np.random.choice(['box', 'circle', 'triangle'])
         location = (np.random.randint(0, 256), np.random.randint(0, 256))
-        size = np.random.randint(10, 50)  # Random size between 10 and 50
+        size = np.random.randint(10, 80)  # Random size between 10 and 50
         rotation = np.random.randint(0, 360)  # Random rotation between 0 and 360 degrees
 
         if shape_type == 'box':
