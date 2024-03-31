@@ -29,7 +29,7 @@ if __name__ == "__main__":
     # visualize_first_entry(train_dir)
 
     # Initialize your callback
-    writer = SummaryWriter('sdf/separable_conv1')
+    writer = SummaryWriter('sdf/separable_conv/test2')
     callback = EvaluateAndVisualizeCallback(input_path, writer, visualize_every_n_epochs=10)
 
     trained_model = train_model(train_dir, callback=callback)

@@ -20,7 +20,8 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     train_files = [os.path.join(train_dir, f) for f in os.listdir(train_dir)]
     train_dataset = SDFDataset(train_files)
     # train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=1, prefetch_factor=64, persistent_workers=True)
-    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=16, prefetch_factor=64, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=8, prefetch_factor=64, persistent_workers=True)
+    # train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=16, prefetch_factor=64, persistent_workers=True)
 
     # Initialize the gradient scaler
     scaler = GradScaler()

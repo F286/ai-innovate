@@ -7,7 +7,8 @@ class SDFNet(nn.Module):
         super(SDFNet, self).__init__()
 
         # Constants for sizes
-        LAYER_FEATURES = [16, 32, 64]  # This array directly specifies the number of features per layer
+        LAYER_FEATURES = [4, 8, 16]  # This array directly specifies the number of features per layer
+        # LAYER_FEATURES = [16, 32, 64]  # This array directly specifies the number of features per layer
         # LAYER_FEATURES = [8, 16, 32, 64, 128, 256]  # This array directly specifies the number of features per layer
         FEED_FORWARD_EXPAND = 4
         KERNEL_SIZE = 3 # 7
@@ -51,6 +52,15 @@ class SDFNet(nn.Module):
                     nn.Conv2d(features_in, features_in * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
                     nn.GELU(),
                     # Feed-forward layer to contract back to the initial number of features
+                    nn.Conv2d(features_in * FEED_FORWARD_EXPAND, features_out, kernel_size=1, bias=False),
+                    
+                    # Depthwise convolution
+                    nn.Conv2d(features_out, features_in, kernel_size=KERNEL_SIZE, padding="same", groups=features_in, bias=False),
+                    nn.LayerNorm([features_in, current_extents, current_extents]),
+                    # Pointwise convolution to expand the channel size
+                    nn.Conv2d(features_in, features_in * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
+                    nn.GELU(),
+                    # Feed-forward layer to contract back to the initial number of features
                     nn.Conv2d(features_in * FEED_FORWARD_EXPAND, features_out, kernel_size=1, bias=False)
                 )
             )
@@ -62,6 +72,15 @@ class SDFNet(nn.Module):
         # Middle Part
         self.middle_convs = nn.Sequential(
             nn.Sequential(
+                # Depthwise convolution
+                nn.Conv2d(LAYER_FEATURES[-1], LAYER_FEATURES[-1], kernel_size=KERNEL_SIZE, padding="same", groups=LAYER_FEATURES[-1], bias=False),
+                nn.LayerNorm([LAYER_FEATURES[-1], MIDDLE_EXTENTS, MIDDLE_EXTENTS]),
+                # Pointwise convolution to expand the channel size
+                nn.Conv2d(LAYER_FEATURES[-1], LAYER_FEATURES[-1] * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
+                nn.GELU(),
+                # Feed-forward layer to contract back to the initial number of features
+                nn.Conv2d(LAYER_FEATURES[-1] * FEED_FORWARD_EXPAND, LAYER_FEATURES[-1], kernel_size=1, bias=False),
+                
                 # Depthwise convolution
                 nn.Conv2d(LAYER_FEATURES[-1], LAYER_FEATURES[-1], kernel_size=KERNEL_SIZE, padding="same", groups=LAYER_FEATURES[-1], bias=False),
                 nn.LayerNorm([LAYER_FEATURES[-1], MIDDLE_EXTENTS, MIDDLE_EXTENTS]),
@@ -97,6 +116,15 @@ class SDFNet(nn.Module):
                     nn.Conv2d(features_out, features_out * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
                     nn.GELU(),
                     # Feed-forward layer to contract back to the initial number of features
+                    nn.Conv2d(features_out * FEED_FORWARD_EXPAND, features_out, kernel_size=1, bias=False),
+                    
+                    # Depthwise convolution
+                    nn.Conv2d(features_out, features_out, kernel_size=KERNEL_SIZE, padding="same", groups=features_out, bias=False),
+                    nn.LayerNorm([features_out, current_extents, current_extents]),
+                    # Pointwise convolution to expand the channel size
+                    nn.Conv2d(features_out, features_out * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
+                    nn.GELU(),
+                    # Feed-forward layer to contract back to the initial number of features
                     nn.Conv2d(features_out * FEED_FORWARD_EXPAND, features_out, kernel_size=1, bias=False)
                 )
             )
@@ -105,7 +133,16 @@ class SDFNet(nn.Module):
         self.final_conv = nn.Sequential(
                 # stem upscale
                 nn.ConvTranspose2d(LAYER_FEATURES[0], LAYER_FEATURES[0], kernel_size=4, stride=4, bias=False),
-                nn.Conv2d(LAYER_FEATURES[0], 1, kernel_size=1)
+                nn.LayerNorm([LAYER_FEATURES[0], INITIAL_EXTENTS, INITIAL_EXTENTS]),
+                # nn.Conv2d(LAYER_FEATURES[0], 1, kernel_size=1),
+                    
+                nn.Conv2d(LAYER_FEATURES[0], LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, kernel_size=1),  # Expands the channel dimension
+                nn.ReLU(),  # Activation function for non-linearity
+                nn.Conv2d(LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, LAYER_FEATURES[0], kernel_size=1),  # Contracts the channel dimension back
+                
+                nn.LayerNorm([LAYER_FEATURES[0], INITIAL_EXTENTS, INITIAL_EXTENTS]),
+                
+                nn.Conv2d(LAYER_FEATURES[0], 1, kernel_size=1),
             )
 
     def forward(self, x):
