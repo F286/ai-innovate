@@ -31,7 +31,9 @@ class SDFObject:
         # (self.sdf_data < 0.1) & (self.sdf_data > -1.1) creates this boolean mask based on our conditions.
         # .astype(np.float32) converts the boolean mask to a float mask, turning True/False into 1.0/0.0, making it compatible for further processing.
         # np.expand_dims adds an axis, making the array compatible for operations that expect an additional dimension, such as certain neural network inputs.
-        edge_voxels = np.expand_dims(((self.sdf_data < 0.1) & (self.sdf_data > -1.1)).astype(np.float32), axis=0)
+
+        # edge_voxels = np.expand_dims(((self.sdf_data < 0.1) & (self.sdf_data > -1.1)).astype(np.float32), axis=0)
+        edge_voxels = np.expand_dims((self.sdf_data < 0.1).astype(np.float32), axis=0)
 
         # Instead of returning a tensor, we return a new SDFObject containing the edge voxels.
         return SDFObject(edge_voxels, "Edge Voxels")
@@ -62,7 +64,8 @@ class SDFObject:
         Returns:
             SDFObject: An instance of SDFObject containing the processed target data.
         """
-        target = np.expand_dims(np.clip((256 - np.abs(self.sdf_data)) / 256, 0, 1).astype(np.float32), axis=0)
+        # target = np.expand_dims(np.clip((256 - np.abs(self.sdf_data)) / 256, 0, 1).astype(np.float32), axis=0)
+        target = np.expand_dims(np.clip((self.sdf_data) / 256, -1, 1).astype(np.float32), axis=0)
 
         # Instead of returning a tensor, we return a new SDFObject containing the target data.
         return SDFObject(target, "Target")
