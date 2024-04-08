@@ -28,7 +28,7 @@ def evaluate_and_visualize(model, input_path: str, writer: SummaryWriter, epoch:
     # Assuming visualize_sdf can save the plot to a buffer, but modifying it to display images in a square layout
     buffer = io.BytesIO()
     # The number of objects to visualize is 4 (original, edge voxels, target, predicted), so we aim for a 2x2 layout
-    visualize_sdf(sdf_object, sdf_object.get_edge_voxels(), sdf_object.get_target(), predicted_sdf_object, buffer=buffer, layout='square')
+    visualize_sdf(sdf_object.get_edge_voxels(), sdf_object.get_target(), predicted_sdf_object, buffer=buffer)
     buffer.seek(0)
 
     # Convert buffer to Tensor
@@ -45,5 +45,5 @@ class EvaluateAndVisualizeCallback(Callback):
         self.visualize_every_n_epochs = visualize_every_n_epochs
 
     def on_epoch_end(self, epoch, model, loss: float):
-        if (epoch + 1) % self.visualize_every_n_epochs == 0:
+        if epoch % self.visualize_every_n_epochs == 0:
             evaluate_and_visualize(model, self.input_path, self.writer, epoch=epoch, loss=loss)
