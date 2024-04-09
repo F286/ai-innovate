@@ -30,12 +30,6 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     for epoch in range(1000000):
         epoch_loss = 0.0  # Initialize epoch loss
         num_batches = 0  # Initialize batch counter
-        
-        # Adjusted to call the callback on the first epoch as well
-        if callback is not None and epoch == 0:
-            # Call the callback with the average loss for the first epoch
-            callback.on_epoch_end(epoch, model, loss=epoch_loss)
-
 
         for edge_voxels, target in train_loader:
             edge_voxels, target = edge_voxels.to(device), target.to(device)
@@ -63,7 +57,7 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
 
         epoch_loss /= num_batches  # Calculate average loss for the epoch
 
-        if callback is not None and epoch > 0:
+        if callback is not None:
             # Call the callback with the average loss for the epoch
             callback.on_epoch_end(epoch, model, loss=epoch_loss)
 

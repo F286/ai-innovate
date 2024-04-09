@@ -16,9 +16,10 @@ class SDFNet(nn.Module):
         MIDDLE_EXTENTS = INITIAL_EXTENTS // 2**DOWNSCALE_LAYERS
 
         # Initial Convolution, adapted for 3D
+        INITIAL_LAYER_FEATURES = 4
         self.initial_conv = nn.Sequential(
-            nn.Conv3d(1, LAYER_FEATURES[0], kernel_size=1, padding="same", bias=False),
-            nn.LayerNorm([LAYER_FEATURES[0], INPUT_EXTENTS, INPUT_EXTENTS, INPUT_EXTENTS])
+            nn.Conv3d(1, INITIAL_LAYER_FEATURES, kernel_size=1, padding="same", bias=False),
+            nn.LayerNorm([INITIAL_LAYER_FEATURES, INPUT_EXTENTS, INPUT_EXTENTS, INPUT_EXTENTS])
         )
 
         # Contracting Path (Downscaling), adapted for 3D
@@ -29,7 +30,7 @@ class SDFNet(nn.Module):
         self.down_convs.append(nn.Sequential())
         self.downscale_convs.append(
             nn.Sequential(
-                nn.Conv3d(LAYER_FEATURES[0], LAYER_FEATURES[0], kernel_size=4, stride=4, padding=0, bias=False)
+                nn.Conv3d(INITIAL_LAYER_FEATURES, LAYER_FEATURES[0], kernel_size=4, stride=4, padding=0, bias=False)
             ))
 
         for i in range(DOWNSCALE_LAYERS):
