@@ -10,7 +10,7 @@ from .callbacks import Callback
 from torch.cuda.amp import autocast, GradScaler
 import os
 
-def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
+def train_model(train_dir: str, callback: Callback = None, total_epochs: int = 1) -> SDFNet:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SDFNet().to(device)
     # optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -27,7 +27,7 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
     scaler = GradScaler()
 
     model.train()
-    for epoch in range(1000000):
+    for epoch in range(total_epochs):
         epoch_loss = 0.0  # Initialize epoch loss
         num_batches = 0  # Initialize batch counter
 
@@ -39,6 +39,9 @@ def train_model(train_dir: str, callback: Callback = None) -> SDFNet:
             # Run the forward pass under autocast
             with autocast():
                 output = model(edge_voxels)
+
+                assert output.size() == target.size(), "Output and target sizes must be identical."
+
                 loss = criterion(output, target)
 
             # Scale the loss and call backward to create scaled gradients

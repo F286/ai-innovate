@@ -10,38 +10,35 @@ class SDFNet(nn.Module):
         LAYER_FEATURES = [4, 8, 16]  # Number of features per layer
         FEED_FORWARD_EXPAND = 2
         KERNEL_SIZE = (3, 3, 3)  # Now a 3-tuple for 3D
-        INPUT_EXTENTS = 256
-        INITIAL_EXTENTS = INPUT_EXTENTS // 4
         DOWNSCALE_LAYERS = len(LAYER_FEATURES) - 1
-        MIDDLE_EXTENTS = INITIAL_EXTENTS // 2**DOWNSCALE_LAYERS
+        DOWNSCALE_RATE = 4
 
         # Initial Convolution, adapted for 3D
         INITIAL_LAYER_FEATURES = 4
         self.initial_conv = nn.Sequential(
             nn.Conv3d(1, INITIAL_LAYER_FEATURES, kernel_size=1, padding="same", bias=False),
-            nn.LayerNorm([INITIAL_LAYER_FEATURES, INPUT_EXTENTS, INPUT_EXTENTS, INPUT_EXTENTS])
+            # nn.BatchNorm3d(INITIAL_LAYER_FEATURES)
         )
 
         # Contracting Path (Downscaling), adapted for 3D
         self.down_convs = nn.ModuleList()
         self.downscale_convs = nn.ModuleList()
 
-        # Initial downscale using a 4x4x4 stride for 3D
+        # Initial downscale
         self.down_convs.append(nn.Sequential())
         self.downscale_convs.append(
             nn.Sequential(
-                nn.Conv3d(INITIAL_LAYER_FEATURES, LAYER_FEATURES[0], kernel_size=4, stride=4, padding=0, bias=False)
+                nn.Conv3d(INITIAL_LAYER_FEATURES, LAYER_FEATURES[0], kernel_size=DOWNSCALE_RATE, stride=DOWNSCALE_RATE, padding=0, bias=False)
             ))
 
         for i in range(DOWNSCALE_LAYERS):
-            current_extents = INITIAL_EXTENTS // 2**i
             features_in = LAYER_FEATURES[i]
             features_out = LAYER_FEATURES[i + 1]
             self.down_convs.append(
                 nn.Sequential(
                     # Depthwise convolution adapted for 3D
                     nn.Conv3d(features_in, features_in, kernel_size=KERNEL_SIZE, padding="same", groups=features_in, bias=False),
-                    nn.LayerNorm([features_in, current_extents, current_extents, current_extents]),
+                    # nn.BatchNorm3d(features_in),
                     # Pointwise convolution to expand the channel size
                     nn.Conv3d(features_in, features_in * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
                     nn.GELU(),
@@ -51,13 +48,13 @@ class SDFNet(nn.Module):
             )
             self.downscale_convs.append(
                 nn.Sequential(
-                    nn.Conv3d(features_out, features_out, kernel_size=2, stride=2, padding=0, bias=False)
+                    nn.Conv3d(features_out, features_out, kernel_size=DOWNSCALE_RATE, stride=DOWNSCALE_RATE, padding=0, bias=False)
                 ))
 
         # Middle Part, adapted for 3D
         self.middle_convs = nn.Sequential(
             nn.Conv3d(LAYER_FEATURES[-1], LAYER_FEATURES[-1], kernel_size=KERNEL_SIZE, padding="same", groups=LAYER_FEATURES[-1], bias=False),
-            nn.LayerNorm([LAYER_FEATURES[-1], MIDDLE_EXTENTS, MIDDLE_EXTENTS, MIDDLE_EXTENTS]),
+            nn.BatchNorm3d(LAYER_FEATURES[-1]),
             nn.Conv3d(LAYER_FEATURES[-1], LAYER_FEATURES[-1] * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
             nn.GELU(),
             nn.Conv3d(LAYER_FEATURES[-1] * FEED_FORWARD_EXPAND, LAYER_FEATURES[-1], kernel_size=1, bias=False),
@@ -72,14 +69,13 @@ class SDFNet(nn.Module):
             features_in = LAYER_FEATURES[index + 1]
             features_out = LAYER_FEATURES[index]
             self.up_transposes.append(
-                nn.ConvTranspose3d(features_in, features_in, kernel_size=2, stride=2, bias=False)
+                nn.ConvTranspose3d(features_in, features_in, kernel_size=DOWNSCALE_RATE, stride=DOWNSCALE_RATE, bias=False)
             )
-            current_extents = INITIAL_EXTENTS // 2**index
             self.up_convs.append(
                 nn.Sequential(
                     # Depthwise convolution adapted for 3D
                     nn.Conv3d(features_in * 2, features_out, kernel_size=KERNEL_SIZE, padding="same", groups=features_out, bias=False),
-                    nn.LayerNorm([features_out, current_extents, current_extents, current_extents]),
+                    # nn.BatchNorm3d(features_out),
                     # Pointwise convolution to expand the channel size
                     nn.Conv3d(features_out, features_out * FEED_FORWARD_EXPAND, kernel_size=1, bias=False),
                     nn.GELU(),
@@ -90,12 +86,11 @@ class SDFNet(nn.Module):
 
         # Final Convolution, adapted for 3D
         self.final_conv = nn.Sequential(
-            nn.ConvTranspose3d(LAYER_FEATURES[0], LAYER_FEATURES[0], kernel_size=4, stride=4, bias=False),
-            nn.LayerNorm([LAYER_FEATURES[0], INPUT_EXTENTS, INPUT_EXTENTS, INPUT_EXTENTS]),
+            nn.ConvTranspose3d(LAYER_FEATURES[0], LAYER_FEATURES[0], kernel_size=DOWNSCALE_RATE, stride=DOWNSCALE_RATE, bias=False),
+            # nn.BatchNorm3d(LAYER_FEATURES[0]),
             nn.Conv3d(LAYER_FEATURES[0], LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, kernel_size=1),  # Expands the channel dimension
             nn.ReLU(),  # Activation function for non-linearity
             nn.Conv3d(LAYER_FEATURES[0] * FEED_FORWARD_EXPAND, LAYER_FEATURES[0], kernel_size=1),  # Contracts the channel dimension back
-            nn.LayerNorm([LAYER_FEATURES[0], INPUT_EXTENTS, INPUT_EXTENTS, INPUT_EXTENTS]),
             nn.Conv3d(LAYER_FEATURES[0], 1, kernel_size=1),
         )
 
