@@ -32,6 +32,18 @@ def flatten_with_names(tensor: torch.Tensor, start_dim: int, end_dim: int, names
     tensor_flattened = tensor_unnamed.flatten(start_dim, end_dim)
     return tensor_flattened.refine_names(*names)
 
+def bitwise_or_with_names(tensor1: torch.Tensor, tensor2: torch.Tensor, names: tuple) -> torch.Tensor:
+    tensor1_unnamed = tensor1.rename(None)
+    tensor2_unnamed = tensor2.rename(None)
+    result_unnamed = tensor1_unnamed | tensor2_unnamed
+    return result_unnamed.refine_names(*names)
+
+def masked_fill_with_names(tensor: torch.Tensor, mask: torch.Tensor, value: float, names: tuple) -> torch.Tensor:
+    tensor_unnamed = tensor.rename(None)
+    mask_unnamed = mask.rename(None)
+    result_unnamed = tensor_unnamed.masked_fill(mask_unnamed, value)
+    return result_unnamed.refine_names(*names)
+
 class SentenceAwareAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super().__init__()
@@ -106,18 +118,11 @@ class HierarchicalSentenceTransformer(nn.Module):
         causal_mask = self.create_causal_mask(x.size('sequence'))
         sentence_mask = self.create_sentence_mask(x)
         
-        # Remove names for operations that do not support named tensors
-        causal_mask_unnamed = causal_mask.rename(None)
-        sentence_mask_unnamed = sentence_mask.rename(None)
+        combined_mask = bitwise_or_with_names(causal_mask, sentence_mask, ('batch', 'sequence', 'sequence_mask'))
+        combined_mask = masked_fill_with_names(combined_mask.float(), combined_mask == 1, float('-inf'), ('batch', 'sequence', 'sequence_mask'))
         
-        combined_mask = causal_mask_unnamed | sentence_mask_unnamed
-        combined_mask = combined_mask.float().masked_fill(combined_mask == 1, float('-inf'))
-        
-        # Reassign names after operations
-        combined_mask = combined_mask.refine_names('batch', 'sequence', 'sequence_mask')
         assert combined_mask.names == ('batch', 'sequence', 'sequence_mask')
         
-        # Adjust the shape of the combined_mask for multi-head attention
         combined_mask = unsqueeze_with_names(combined_mask, 1, ('batch', 'num_heads', 'sequence', 'sequence_mask'))
         combined_mask = repeat_with_names(combined_mask, (1, self.config.num_heads, 1, 1), ('batch', 'num_heads', 'sequence', 'sequence_mask'))
         combined_mask = flatten_with_names(combined_mask, 0, 1, ('batch_head', 'sequence', 'sequence_mask'))
@@ -171,17 +176,9 @@ class TestHierarchicalSentenceTransformer(unittest.TestCase):
         causal_mask = self.model.create_causal_mask(self.config.seq_length)
         sentence_mask = self.model.create_sentence_mask(input_tensor)
         
-        # Remove names for operations that do not support named tensors
-        causal_mask_unnamed = causal_mask.rename(None)
-        sentence_mask_unnamed = sentence_mask.rename(None)
+        combined_mask = bitwise_or_with_names(causal_mask, sentence_mask, ('batch', 'sequence', 'sequence_mask'))
+        combined_mask = masked_fill_with_names(combined_mask.float(), combined_mask == 1, float('-inf'), ('batch', 'sequence', 'sequence_mask'))
         
-        combined_mask = causal_mask_unnamed | sentence_mask_unnamed
-        combined_mask = combined_mask.float().masked_fill(combined_mask == 1, float('-inf'))
-        
-        # Reassign names after operations
-        combined_mask = combined_mask.refine_names('batch', 'sequence', 'sequence_mask')
-        
-        # Adjust the shape of the combined_mask for multi-head attention
         combined_mask = unsqueeze_with_names(combined_mask, 1, ('batch', 'num_heads', 'sequence', 'sequence_mask'))
         combined_mask = repeat_with_names(combined_mask, (1, self.config.num_heads, 1, 1), ('batch', 'num_heads', 'sequence', 'sequence_mask'))
         combined_mask = flatten_with_names(combined_mask, 0, 1, ('batch_head', 'sequence', 'sequence_mask'))
