@@ -1,191 +1,260 @@
 import torch
 import torch.nn as nn
-import unittest
+from torch.utils.data import Dataset, DataLoader
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import List, Dict, Tuple, Optional
+import re
 
+class SpecialToken(Enum):
+    PAD = auto()
+    EOS = auto()
+    BOS = auto()
+
+@dataclass
 class Config:
-    batch_size = 128
-    seq_length = 256
-    d_model = 256
-    feed_forward_expand_dim = d_model * 4
-    num_layers = 8
-    num_heads = 4
-    num_epochs = 10000
-    checkpoint_path = ""
-    vocab_size = 4096
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    PAD_IDX = 1
-    EOS_IDX = 2
-    BOS_IDX = 3
+    batch_size: int = 2
+    max_sequence_length: int = 512
+    d_model: int = 768
+    nhead: int = 12
+    num_layers: int = 6
+    dim_feedforward: int = 3072
+    dropout: float = 0.1
 
-def unsqueeze_with_names(tensor: torch.Tensor, dim: int, names: tuple) -> torch.Tensor:
-    tensor_unnamed = tensor.rename(None)
-    tensor_unsqueezed = tensor_unnamed.unsqueeze(dim)
-    return tensor_unsqueezed.refine_names(*names)
+class BooleanMask:
+    def __init__(self, size: Tuple[int, int, int]):
+        self.size = size
+        self.data = torch.ones(size, dtype=torch.bool)
 
-def repeat_with_names(tensor: torch.Tensor, repeats: tuple, names: tuple) -> torch.Tensor:
-    tensor_unnamed = tensor.rename(None)
-    tensor_repeated = tensor_unnamed.repeat(*repeats)
-    return tensor_repeated.refine_names(*names)
+    def __getitem__(self, key: Tuple[int, int, int]) -> bool:
+        return self.data[key]
 
-def flatten_with_names(tensor: torch.Tensor, start_dim: int, end_dim: int, names: tuple) -> torch.Tensor:
-    tensor_unnamed = tensor.rename(None)
-    tensor_flattened = tensor_unnamed.flatten(start_dim, end_dim)
-    return tensor_flattened.refine_names(*names)
+    def __setitem__(self, key: Tuple[int, int, int], value: bool) -> None:
+        self.data[key] = value
 
-def bitwise_or_with_names(tensor1: torch.Tensor, tensor2: torch.Tensor, names: tuple) -> torch.Tensor:
-    tensor1_unnamed = tensor1.rename(None)
-    tensor2_unnamed = tensor2.rename(None)
-    result_unnamed = tensor1_unnamed | tensor2_unnamed
-    return result_unnamed.refine_names(*names)
+    def __str__(self) -> str:
+        return "\n".join(
+            "\n".join("".join("□" if self[b, i, j] else "■" for j in range(self.size[2])) 
+                      for i in range(self.size[1]))
+            for b in range(self.size[0])
+        )
 
-def masked_fill_with_names(tensor: torch.Tensor, mask: torch.Tensor, value: float, names: tuple) -> torch.Tensor:
-    tensor_unnamed = tensor.rename(None)
-    mask_unnamed = mask.rename(None)
-    result_unnamed = tensor_unnamed.masked_fill(mask_unnamed, value)
-    return result_unnamed.refine_names(*names)
+    def visualize(self, title: str, tokens_batch: List[List[str]], sentences: Optional[List[str]] = None) -> None:
+        print(f"\n{title}")
+        
+        if sentences:
+            for i, sentence in enumerate(sentences):
+                print(f"Sentence {i + 1}: {sentence}")
+        
+        for batch_idx, tokens in enumerate(tokens_batch):
+            print(f"\nBatch {batch_idx + 1}:")
+            
+            # Calculate the width of each cell based on the longest token
+            cell_width = max(len(token) for token in tokens) + 2
+            
+            # Print the tokens
+            print(" " * 4 + "".join(f"{token:^{cell_width}}" for token in tokens))
+            
+            # Print the mask with corresponding letters/tokens
+            for i in range(self.size[1]):
+                row = "".join("□" if self[batch_idx, i, j] else "■" for j in range(self.size[2]))
+                print(f"{tokens[i]:>3} {row}")
 
-class SentenceAwareAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
-        super().__init__()
-        self.multihead_attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+    def get_pytorch_mask(self) -> torch.Tensor:
+        return self.data
+
+class IsolatedCausalMask:
+    @staticmethod
+    def create_mask(tokenized_batch: List[List[int]], split_token: int, pad_token: int) -> BooleanMask:
+        batch_size = len(tokenized_batch)
+        max_length = max(len(seq) for seq in tokenized_batch)
+        mask = BooleanMask((batch_size, max_length, max_length))
+        
+        for batch_idx, sequence in enumerate(tokenized_batch):
+            current_position = 0
+            for i, token in enumerate(sequence):
+                for j in range(current_position, i + 1):
+                    mask[batch_idx, i, j] = False
+                if token == split_token:
+                    current_position = i + 1
+                elif token == pad_token:
+                    break
+        
+        return mask
+
+
+import torch
+import torch.nn as nn
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import List, Dict, Tuple, Optional
+
+class SpecialToken(Enum):
+    PAD = auto()
+    EOS = auto()
+    BOS = auto()
+
+
+class TokenHandler:
+    def __init__(self):
+        self.vocab: Dict[str, int] = {}
+        self.inverse_vocab: Dict[int, str] = {}
+        self._initialize_vocab()
+
+    def _initialize_vocab(self) -> None:
+        special_tokens = [token.name for token in SpecialToken]
+        for i, token in enumerate(special_tokens):
+            self.vocab[token] = i
+            self.inverse_vocab[i] = token
+        
+        for i in range(32, 127):  # ASCII printable characters
+            char = chr(i)
+            self.vocab[char] = len(self.vocab)
+            self.inverse_vocab[len(self.inverse_vocab)] = char
+        
+        # Add underscore as space representation
+        self.vocab['_'] = len(self.vocab)
+        self.inverse_vocab[len(self.inverse_vocab)] = '_'
+
+    @torch.jit.export
+    def tokenize(self, text: str, split_on_space: bool = False) -> List[int]:
+        tokens = [self.vocab['BOS']]
+        for char in text:
+            if char == ' ':
+                tokens.append(self.vocab['_'])
+            elif char in self.vocab:
+                tokens.append(self.vocab[char])
+            else:
+                tokens.append(self.vocab['PAD'])  # Use PAD for unknown characters
+            
+            if char in '.!?' and not split_on_space:
+                tokens.append(self.vocab['EOS'])
+        
+        if split_on_space:
+            tokens.append(self.vocab['EOS'])
+        return tokens
+
+    def tokenize_batch(self, sentences: List[str], split_on_space: bool = False) -> List[List[int]]:
+        return [self.tokenize(sentence, split_on_space) for sentence in sentences]
+
+    def pad_sequences(self, sequences: List[List[int]], pad_token: int) -> List[List[int]]:
+        max_length = max(len(seq) for seq in sequences)
+        return [seq + [pad_token] * (max_length - len(seq)) for seq in sequences]
+
+    @torch.jit.export
+    def detokenize(self, tokens: List[int]) -> str:
+        # Convert list to tensor
+        tokens_tensor = torch.tensor(tokens, dtype=torch.long)
+        
+        # Create a mask for special tokens
+        special_mask = (tokens_tensor != self.vocab['BOS']) & (tokens_tensor != self.vocab['EOS']) & (tokens_tensor != self.vocab['PAD'])
+        
+        # Filter out special tokens
+        filtered_tokens = tokens_tensor[special_mask]
+        
+        # Convert underscore to space
+        filtered_tokens = torch.where(filtered_tokens == self.vocab['_'], torch.tensor(32), filtered_tokens)
+        
+        # Convert to list of integers with explicit type annotation
+        result: List[int] = filtered_tokens.tolist()
+        
+        # Convert to string
+        return ''.join([chr(t) if t < 128 else self.inverse_vocab[t] for t in result])
+
     
-    def forward(self, x, attn_mask=None):
-        assert x.names == ('batch', 'sequence', 'embedding')
-        if (attn_mask is not None) and attn_mask.names != ('batch', 'sequence', 'sequence_mask'):
-            raise AssertionError(f"Expected attn_mask names to be ('batch', 'sequence', 'sequence_mask'), got {attn_mask.names}")
-        
-        x_unnamed = x.rename(None)
-        attn_mask_unnamed = attn_mask.rename(None) if attn_mask is not None else None
-        
-        output, _ = self.multihead_attn(x_unnamed, x_unnamed, x_unnamed, attn_mask=attn_mask_unnamed, need_weights=False)
-        
-        output = output.refine_names('batch', 'sequence', 'embedding')
-        assert output.names == ('batch', 'sequence', 'embedding')
-        return output
+# Use TorchScript to optimize TokenHandler
+token_handler_script = torch.jit.script(TokenHandler())
 
-class SentenceProcessingLayer(nn.Module):
-    def __init__(self, d_model, dim_feedforward):
-        super().__init__()
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.norm = nn.LayerNorm(d_model)
-        self.activation = nn.ReLU()
-
-    def forward(self, x):
-        assert x.names == ('batch', 'sequence', 'embedding')
-        x_unnamed = x.rename(None)
-        output = self.norm(x_unnamed + self.linear2(self.activation(self.linear1(x_unnamed))))
-        output = output.refine_names(*x.names)
-        assert output.names == ('batch', 'sequence', 'embedding')
-        return output
 
 class HierarchicalSentenceTransformer(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: Config, token_handler: TokenHandler):
         super().__init__()
         self.config = config
-        self.embedding = nn.Embedding(config.vocab_size, config.d_model)
-        self.pos_encoding = nn.Parameter(torch.randn(1, config.seq_length, config.d_model).refine_names('batch', 'sequence', 'embedding'))
-        self.layers = nn.ModuleList([SentenceAwareAttention(config.d_model, config.num_heads) for _ in range(config.num_layers)])
-        self.sentence_processing = SentenceProcessingLayer(config.d_model, config.feed_forward_expand_dim)
-        self.norm = nn.LayerNorm(config.d_model)
-        self.fc_layer = nn.Linear(config.d_model, config.vocab_size)
+        self.token_handler = token_handler
+        
+        self.embedding = nn.Embedding(len(token_handler.vocab), config.d_model)
+        self.transformer_layer = nn.TransformerEncoderLayer(
+            d_model=config.d_model,
+            nhead=config.nhead,
+            dim_feedforward=config.dim_feedforward,
+            dropout=config.dropout,
+            batch_first=True,
+            norm_first=True
+        )
+        self.transformer = nn.TransformerEncoder(self.transformer_layer, num_layers=config.num_layers)
+        self.fc_out = nn.Linear(config.d_model, len(token_handler.vocab))
 
-    def create_causal_mask(self, seq_len):
-        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        mask = mask.to(self.config.device).refine_names('sequence', 'sequence_mask')
-        assert mask.names == ('sequence', 'sequence_mask')
-        return mask
-
-    def create_sentence_mask(self, x):
-        assert x.names == ('batch', 'sequence')
-        eos_mask = (x == self.config.EOS_IDX).float()
-        sentence_ids = torch.cumsum(eos_mask, dim=1)
-        sentence_ids = sentence_ids.rename(None)
-        mask = sentence_ids.unsqueeze(2) != sentence_ids.unsqueeze(1)
-        mask = mask.refine_names('batch', 'sequence', 'sequence_mask')
-        assert mask.names == ('batch', 'sequence', 'sequence_mask')
-        return mask
-
-    def forward(self, x):
-        assert x.dim() == 2, f"Expected input to have 2 dimensions, got {x.dim()}"
-        x = x.refine_names('batch', 'sequence')
+    def forward(self, src: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        print(f"Input shape: {src.shape}")
+        print(f"Input tensor:\n{src}")
+        print(f"Mask shape: {mask.shape}")
+        print(f"Mask tensor:\n{mask}")
         
-        x_emb = self.embedding(x.rename(None)).refine_names('batch', 'sequence', 'embedding')
-        assert x_emb.names == ('batch', 'sequence', 'embedding')
+        embedded = self.embedding(src)
+        print(f"Embedded shape: {embedded.shape}")
         
-        x_emb = x_emb + self.pos_encoding
+        # Use the mask directly without reshaping
+        transformer_out = self.transformer(embedded, src_key_padding_mask=mask)
+        print(f"Transformer output shape: {transformer_out.shape}")
         
-        causal_mask = self.create_causal_mask(x.size('sequence'))
-        sentence_mask = self.create_sentence_mask(x)
+        output = self.fc_out(transformer_out)
+        print(f"Final output shape: {output.shape}")
         
-        combined_mask = bitwise_or_with_names(causal_mask, sentence_mask, ('batch', 'sequence', 'sequence_mask'))
-        combined_mask = masked_fill_with_names(combined_mask.float(), combined_mask == 1, float('-inf'), ('batch', 'sequence', 'sequence_mask'))
-        
-        assert combined_mask.names == ('batch', 'sequence', 'sequence_mask')
-        
-        combined_mask = unsqueeze_with_names(combined_mask, 1, ('batch', 'num_heads', 'sequence', 'sequence_mask'))
-        combined_mask = repeat_with_names(combined_mask, (1, self.config.num_heads, 1, 1), ('batch', 'num_heads', 'sequence', 'sequence_mask'))
-        combined_mask = flatten_with_names(combined_mask, 0, 1, ('batch_head', 'sequence', 'sequence_mask'))
-        
-        for i, layer in enumerate(self.layers):
-            x_emb = layer(x_emb, attn_mask=combined_mask)
-            assert x_emb.names == ('batch', 'sequence', 'embedding')
-            
-            if i == len(self.layers) // 2:
-                eos_mask = (x == self.config.EOS_IDX).any(dim='embedding')
-                eos_tokens = x_emb[eos_mask]
-                if eos_tokens.size('batch') > 0:
-                    processed_eos = self.sentence_processing(eos_tokens)
-                    x_emb[eos_mask] = processed_eos
-
-        x_emb = self.norm(x_emb.rename(None)).refine_names('batch', 'sequence', 'embedding')
-        output = self.fc_layer(x_emb.rename(None)).refine_names('batch', 'sequence', 'vocab')
-        
-        assert output.names == ('batch', 'sequence', 'vocab')
         return output
 
-class TestHierarchicalSentenceTransformer(unittest.TestCase):
-    def setUp(self):
-        self.config = Config()
-        self.model = HierarchicalSentenceTransformer(self.config).to(self.config.device)
+def test_batched_sentence_isolated_causal_mask(model: HierarchicalSentenceTransformer, token_handler: TokenHandler) -> bool:
+    sentences = [
+        "The quick brown fox jumps over the lazy dog.",
+        "Pack my box with five dozen liquor jugs."
+    ]
+    
+    print("Input sentences:")
+    for i, sentence in enumerate(sentences, 1):
+        print(f"{i}. {sentence}")
+    
+    # Test with space-based splitting
+    tokenized_space = token_handler.tokenize_batch(sentences, split_on_space=True)
+    padded_space = token_handler.pad_sequences(tokenized_space, token_handler.vocab['PAD'])
+    
+    print("Tokenized and padded input:")
+    for tokens in padded_space:
+        print([token_handler.inverse_vocab.get(token, f"<{token}>") for token in tokens])
+    
+    # Prepare input tensors
+    input_tensor_space = torch.tensor(padded_space, dtype=torch.long)
+    
+    # Create a simple mask (False for padding, True for non-padding)
+    mask = (input_tensor_space != token_handler.vocab['PAD'])
+    
+    print(f"Input tensor shape: {input_tensor_space.shape}")
+    print(f"Mask shape: {mask.shape}")
+    
+    # Run forward pass
+    try:
+        with torch.no_grad():
+            output_space = model(input_tensor_space, mask)
+        
+        print(f"Model output shape: {output_space.shape}")
+        print("Forward pass successful!")
+        return True
+    except Exception as e:
+        print(f"Error during forward pass: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
-    def test_forward_pass(self):
-        input_tensor = torch.randint(0, self.config.vocab_size, (2, self.config.seq_length)).to(self.config.device)
-        input_tensor = input_tensor.refine_names('batch', 'sequence')
-        input_tensor = input_tensor.rename(None)
-        output = self.model(input_tensor)
-        self.assertEqual(output.names, ('batch', 'sequence', 'vocab'))
-        self.assertEqual(output.shape, (2, self.config.seq_length, self.config.vocab_size))
+def main() -> None:
+    config = Config()
+    token_handler = TokenHandler()
+    model = HierarchicalSentenceTransformer(config, token_handler)
 
-    def test_mask_creation(self):
-        input_tensor = torch.randint(0, self.config.vocab_size, (2, self.config.seq_length)).to(self.config.device)
-        input_tensor = input_tensor.refine_names('batch', 'sequence')
-        
-        causal_mask = self.model.create_causal_mask(self.config.seq_length)
-        self.assertEqual(causal_mask.names, ('sequence', 'sequence_mask'))
-        self.assertEqual(causal_mask.shape, (self.config.seq_length, self.config.seq_length))
-        
-        sentence_mask = self.model.create_sentence_mask(input_tensor)
-        self.assertEqual(sentence_mask.names, ('batch', 'sequence', 'sequence_mask'))
-        self.assertEqual(sentence_mask.shape, (2, self.config.seq_length, self.config.seq_length))
-
-    def test_combined_mask(self):
-        input_tensor = torch.randint(0, self.config.vocab_size, (2, self.config.seq_length)).to(self.config.device)
-        input_tensor = input_tensor.refine_names('batch', 'sequence')
-        
-        causal_mask = self.model.create_causal_mask(self.config.seq_length)
-        sentence_mask = self.model.create_sentence_mask(input_tensor)
-        
-        combined_mask = bitwise_or_with_names(causal_mask, sentence_mask, ('batch', 'sequence', 'sequence_mask'))
-        combined_mask = masked_fill_with_names(combined_mask.float(), combined_mask == 1, float('-inf'), ('batch', 'sequence', 'sequence_mask'))
-        
-        combined_mask = unsqueeze_with_names(combined_mask, 1, ('batch', 'num_heads', 'sequence', 'sequence_mask'))
-        combined_mask = repeat_with_names(combined_mask, (1, self.config.num_heads, 1, 1), ('batch', 'num_heads', 'sequence', 'sequence_mask'))
-        combined_mask = flatten_with_names(combined_mask, 0, 1, ('batch_head', 'sequence', 'sequence_mask'))
-        
-        self.assertEqual(combined_mask.names, ('batch_head', 'sequence', 'sequence_mask'))
-        self.assertEqual(combined_mask.shape, (2 * self.config.num_heads, self.config.seq_length, self.config.seq_length))
-        self.assertTrue(torch.isinf(combined_mask).any())
+    # Test batched sentence-isolated causal mask
+    test_result = test_batched_sentence_isolated_causal_mask(model, token_handler)
+    
+    if test_result:
+        print("\nAll tests passed successfully!")
+    else:
+        print("\nSome tests failed. Please check the output above for details.")
 
 if __name__ == '__main__':
-    unittest.main()
+    main()

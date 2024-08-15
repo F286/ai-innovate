@@ -13,8 +13,6 @@ import pickle
 import time
 from hierarchical_sentence_model import Config, HierarchicalSentenceTransformer
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 # Data processing
 class DataProcessor:
     @staticmethod
